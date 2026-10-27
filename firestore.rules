@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function memberDoc(orgId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid);
+    }
+    function isMember(orgId) {
+      return signedIn() && exists(memberDoc(orgId));
+    }
+    function isWriter(orgId) {
+      return isMember(orgId) && get(memberDoc(orgId)).data.role in ['admin', 'editor'];
+    }
+    function entityDoc(orgId, entityId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/entities/$(entityId);
+    }
+    function categoryDoc(orgId, categoryId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/categories/$(categoryId);
+    }
+    function movementDoc(orgId, movementId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/movements/$(movementId);
+    }
+    function activeEntity(orgId, entityId) {
+      return entityId is string && exists(entityDoc(orgId, entityId)) &&
+        get(entityDoc(orgId, entityId)).data.active == true;
+    }
+    function activeCompany(orgId, entityId) {
+      return activeEntity(orgId, entityId) &&
+        get(entityDoc(orgId, entityId)).data.type == 'company';
+    }
+    function activePersonal(orgId, entityId) {
+      return activeEntity(orgId, entityId) &&
+        get(entityDoc(orgId, entityId)).data.type == 'personal';
+    }
+    function validCategoryForMovement(orgId, kind, categoryId) {
+      return categoryId is string && exists(categoryDoc(orgId, categoryId)) &&
+        get(categoryDoc(orgId, categoryId)).data.active == true &&
+        get(categoryDoc(orgId, categoryId)).data.kind == kind;
+    }
+    function validEntityCreate() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name','type','active','createdAt','createdBy']) &&
+        d.keys().hasAll(['name','type','active','createdAt','createdBy']) &&
+        d.name is string && d.name.size() > 0 && d.name.size() <= 100 &&
+        d.type in ['company','personal'] && d.active is bool &&
+        d.createdBy == request.auth.uid && d.createdAt == request.time;
+    }
+    function validCategoryCreate() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name','kind','active','createdAt','createdBy']) &&
+        d.keys().hasAll(['name','kind','active','createdAt','createdBy']) &&
+        d.name is string && d.name.size() > 0 && d.name.size() <= 100 &&
+        d.kind in ['income','cost','expense'] && d.active is bool &&
+        d.createdBy == request.auth.uid && d.createdAt == request.time;
+    }
+    function validMovement(orgId) {
+      let d = request.resource.data;
+      return d.keys().hasOnly([
+          'date','kind','fromEntityId','toEntityId','categoryId','loanId',
+          'counterparty','description','amountCents','taxCents','createdAt','createdBy'
+        ]) &&
+        d.keys().hasAll([
+          'date','kind','fromEntityId','toEntityId','categoryId','loanId',
+          'counterparty','description','amountCents','taxCents','createdAt','createdBy'
+        ]) &&
+        d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw'] &&
+        d.amountCents is int && d.amountCents > 0 && d.amountCents <= 100000000000 &&
+        d.taxCents is int && d.taxCents >= 0 && d.taxCents <= d.amountCents &&
+        d.counterparty is string && d.counterparty.size() <= 160 &&
+        d.description is string && d.description.size() <= 500 &&
+        d.createdBy == request.auth.uid && d.createdAt == request.time &&
+        (
+          (d.kind == 'income' && d.fromEntityId == null &&
+            activeEntity(orgId, d.toEntityId) &&
+            validCategoryForMovement(orgId, 'income', d.categoryId) && d.loanId == null) ||
+          (d.kind == 'cost' && activeEntity(orgId, d.fromEntityId) &&
+            d.toEntityId == null &&
+            validCategoryForMovement(orgId, 'cost', d.categoryId) && d.loanId == null) ||
+          (d.kind == 'expense' && activeEntity(orgId, d.fromEntityId) &&
+            d.toEntityId == null &&
+            validCategoryForMovement(orgId, 'expense', d.categoryId) && d.loanId == null) ||
+          (d.kind in ['transfer','loan'] && activeEntity(orgId, d.fromEntityId) &&
+            activeEntity(orgId, d.toEntityId) && d.fromEntityId != d.toEntityId &&
+            d.categoryId == null && d.loanId == null && d.taxCents == 0) ||
+          (d.kind == 'personal_draw' && activeCompany(orgId, d.fromEntityId) &&
+            activePersonal(orgId, d.toEntityId) && d.categoryId == null &&
+            d.loanId == null && d.taxCents == 0) ||
+          (d.kind == 'loan_repayment' && activeEntity(orgId, d.fromEntityId) &&
+            activeEntity(orgId, d.toEntityId) && d.fromEntityId != d.toEntityId &&
+            d.categoryId == null && d.taxCents == 0 &&
+            d.loanId is string && exists(movementDoc(orgId, d.loanId)) &&
+            get(movementDoc(orgId, d.loanId)).data.kind == 'loan' &&
+            get(movementDoc(orgId, d.loanId)).data.fromEntityId == d.toEntityId &&
+            get(movementDoc(orgId, d.loanId)).data.toEntityId == d.fromEntityId)
+        );
+    }
+
+    match /organizations/{orgId} {
+      allow get: if isMember(orgId);
+      allow list, create, update, delete: if false;
+
+      match /members/{uid} {
+        // La asignación/revocación de permisos se hace desde Firebase Console
+        // o mediante un backend administrativo; nunca desde el cliente.
+        allow get: if signedIn() && request.auth.uid == uid;
+        allow list, create, update, delete: if false;
+      }
+      match /entities/{entityId} {
+        allow get, list: if isMember(orgId);
+        allow create: if isWriter(orgId) && validEntityCreate();
+        allow update: if isWriter(orgId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','active']) &&
+          request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 100 &&
+          request.resource.data.active is bool;
+        allow delete: if false;
+      }
+      match /categories/{categoryId} {
+        allow get, list: if isMember(orgId);
+        allow create: if isWriter(orgId) && validCategoryCreate();
+        allow update: if isWriter(orgId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','active']) &&
+          request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 100 &&
+          request.resource.data.active is bool;
+        allow delete: if false;
+      }
+      match /movements/{movementId} {
+        allow get, list: if isMember(orgId);
+        allow create: if isWriter(orgId) && validMovement(orgId);
+        // Auditoría básica: sin modificación ni borrado de movimientos.
+        allow update, delete: if false;
+      }
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
