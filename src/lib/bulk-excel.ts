@@ -1,8 +1,14 @@
-import type { Category, Entity, Movement, MovementKind } from "@/lib/finance";
+import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
 import { dollarsToCents, movementLabels } from "@/lib/finance";
 
-export const BULK_VERSION = "NELCY-LAYOUT-2";
+export const BULK_VERSION = "NELCY-LAYOUT-3";
+const OLD_BULK_VERSION = "NELCY-LAYOUT-2";
 export const BULK_HEADERS = [
+  "Folio del usuario (opcional)", "Fecha (AAAA-MM-DD)", "Entidad origen", "Entidad destino",
+  "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
+  "Cliente (solo ingresos; opcional)", "Contraparte / proveedor", "Observaciones", "ID préstamo original",
+] as const;
+const OLD_BULK_HEADERS = [
   "Folio del usuario (opcional)", "Fecha (AAAA-MM-DD)", "Entidad origen", "Entidad destino",
   "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
   "Contraparte / proveedor", "Observaciones", "ID préstamo original",
@@ -24,12 +30,14 @@ export type ImportableMovement = {
   amountCents: number;
   taxCents: number;
   userFolio?: string;
+  customerId?: string;
 };
 export type PreviewLine = {
   row: number;
   userFolio: string;
   date: string;
   entityText: string;
+  customerText: string;
   amountCents: number;
   docId: string;
   data: ImportableMovement | null;
@@ -79,6 +87,23 @@ function pickByName<T extends { id: string; name: string }>(v: string, items: T[
   const names = items.filter((x) => x.name.normalize("NFKC").trim().toLocaleLowerCase("es") === v.normalize("NFKC").trim().toLocaleLowerCase("es"));
   return names.length === 1 ? names[0] : null;
 }
+function customerToken(c: Customer, entities: Entity[]) {
+  const owner = entities.find((e) => e.id === c.companyId)?.name ?? "Empresa desconocida";
+  const code = c.code ? ` · ${c.code}` : "";
+  return `${c.name}${code} — ${owner} [${c.id}]`;
+}
+function customerFromText(text: string, companyId: string, customers: Customer[], entities: Entity[]): Customer | null {
+  if (!text || !companyId) return null;
+  const normalized = (v: string) => v.normalize("NFKC").trim().toLocaleLowerCase("es");
+  const available = customers.filter((c) => c.active && c.companyId === companyId);
+  const exact = available.filter((c) => c.id === text || customerToken(c, entities) === text);
+  if (exact.length === 1) return exact[0];
+  // También se admite el código o nombre si son inequívocos dentro de la empresa.
+  const byCode = available.filter((c) => c.code && normalized(c.code) === normalized(text));
+  if (byCode.length === 1) return byCode[0];
+  const byName = available.filter((c) => normalized(c.name) === normalized(text));
+  return byName.length === 1 ? byName[0] : null;
+}
 function loanToken(m: Movement) { return `${m.date}: ${m.counterparty || m.description || "Préstamo"} [${m.id}]`; }
 function loanFromText(text: string, movements: Movement[]): Movement | null {
   const loans = movements.filter((m) => m.kind === "loan");
@@ -100,7 +125,7 @@ function filenameDownload(data: BlobPart, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], movements: Movement[]) {
+export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], customers: Customer[], movements: Movement[]) {
   const ExcelJS = await excelJs();
   const wb = new ExcelJS.Workbook();
   wb.creator = "Nelcy Corporate Group";
@@ -114,42 +139,58 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   info.addRow(["Fecha", "AAAA-MM-DD. También puedes usar una fecha real de Excel."]);
   info.addRow(["Impuestos", "Incluidos en el total. No se agregan al importe. Cero para préstamos, retiros y transferencias."]);
   info.addRow(["Catálogos", "Usa los valores de las listas de Excel o los IDs exactos mostrados en la pestaña Catálogos."]);
+  info.addRow(["Clientes", "En INGRESOS puedes seleccionar un cliente de la pestaña Catalogos. Debe pertenecer a la Entidad destino (compañía). Para ventas generales, déjalo vacío."]);
   info.addRow(["Préstamos", "Para abonos, indica un préstamo existente y usa origen/destino invertidos."]);
   info.addRow(["Seguridad", "El archivo se valida en el navegador. Se guardan los movimientos confirmados, no el Excel."]);
   info.addRow(["Reimportación", "Con folio: se impide repetir el mismo folio por tipo y entidades. Sin folio: se detecta por contenido y ocurrencia; si dos movimientos son iguales usa folios diferentes."]);
   info.getRow(1).font = { bold: true, size: 13, color: { argb: "FF12365B" } };
-  for (let i = 1; i <= 11; i++) { info.getCell(i, 1).font = { bold: true }; info.getRow(i).height = 26; }
+  for (let i = 1; i <= 12; i++) { info.getCell(i, 1).font = { bold: true }; info.getRow(i).height = 26; }
   const catalog = wb.addWorksheet("Catalogos");
   const active = entities.filter((e) => e.active).sort((a,b) => a.name.localeCompare(b.name));
   const relevant = categories.filter((c) => c.active && c.kind === kind).sort((a,b) => a.name.localeCompare(b.name));
   const loans = movements.filter((m) => m.kind === "loan").sort((a,b)=> b.date.localeCompare(a.date));
-  catalog.columns = [{ header: "Entidades", width: 54 }, { header: "Conceptos", width: 54 }, { header: "Préstamos existentes", width: 74 }];
-  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length); i++) {
-    catalog.addRow([active[i] ? token(active[i].id, active[i].name) : "", relevant[i] ? token(relevant[i].id, relevant[i].name) : "", loans[i] ? loanToken(loans[i]) : ""]);
+  const activeCompanies = new Set(active.filter((e) => e.type === "company").map((e) => e.id));
+  const activeCustomers = kind === "income" ? customers.filter((c) => c.active && activeCompanies.has(c.companyId)).sort((a,b) => a.companyId.localeCompare(b.companyId) || a.name.localeCompare(b.name)) : [];
+  catalog.columns = [
+    { header: "Entidades", width: 54 }, { header: "Conceptos", width: 54 },
+    { header: "Préstamos existentes", width: 74 }, { header: "Clientes activos (empresa indicada)", width: 92 },
+  ];
+  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length, activeCustomers.length); i++) {
+    catalog.addRow([
+      active[i] ? token(active[i].id, active[i].name) : "",
+      relevant[i] ? token(relevant[i].id, relevant[i].name) : "",
+      loans[i] ? loanToken(loans[i]) : "",
+      activeCustomers[i] ? customerToken(activeCustomers[i], entities) : "",
+    ]);
   }
   catalog.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   catalog.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244C7D" } };
   const ws = wb.addWorksheet("Movimientos", { views: [{ state: "frozen", ySplit: 1 }] });
-  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [30, 22, 52, 52, 52, 23, 27, 35, 55, 70][i] }));
+  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [30, 22, 52, 52, 52, 23, 27, 80, 35, 55, 70][i] }));
   ws.getRow(1).height = 33;
   ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D365A" } };
-  ws.autoFilter = { from: "A1", to: "J1" };
+  ws.autoFilter = { from: "A1", to: "K1" };
   if (active.length) wb.definedNames.add(`Catalogos!$A$2:$A$${active.length + 1}`, "ListaEntidades");
   if (relevant.length) wb.definedNames.add(`Catalogos!$B$2:$B$${relevant.length + 1}`, "ListaConceptos");
   if (loans.length) wb.definedNames.add(`Catalogos!$C$2:$C$${loans.length + 1}`, "ListaPrestamos");
+  if (activeCustomers.length) wb.definedNames.add(`Catalogos!$D$2:$D$${activeCustomers.length + 1}`, "ListaClientes");
   for (let row = 2; row <= 501; row++) {
     ws.getCell(row, 2).numFmt = "yyyy-mm-dd";
     ws.getCell(row, 6).numFmt = "#,##0.00";
     ws.getCell(row, 7).numFmt = "#,##0.00";
     if (active.length) for (const col of [3,4]) ws.getCell(row,col).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaEntidades"], showErrorMessage: true, errorTitle: "Entidad inválida", error: "Selecciona una entidad de Catalogos" };
     if (relevant.length) ws.getCell(row,5).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaConceptos"], showErrorMessage: true, errorTitle: "Concepto inválido", error: "Selecciona un concepto de Catalogos" };
-    if (loans.length && kind === "loan_repayment") ws.getCell(row,10).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaPrestamos"] };
+    if (loans.length && kind === "loan_repayment") ws.getCell(row,11).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaPrestamos"] };
+    if (kind === "income" && activeCustomers.length) ws.getCell(row,8).dataValidation = {
+      type: "list", allowBlank: true, formulae: ["ListaClientes"],
+      showErrorMessage: true, errorTitle: "Cliente no registrado", error: "Selecciona un cliente del catálogo. Debe pertenecer a la entidad destino.",
+    };
   }
   const bytes = await wb.xlsx.writeBuffer();
   // ExcelJS returns a Uint8Array/Buffer; copy into a standard ArrayBuffer for Blob compatibility.
   const u8 = new Uint8Array(bytes);
-  filenameDownload(u8.slice().buffer, `nelcy_${kind}_layout_v2.xlsx`);
+  filenameDownload(u8.slice().buffer, `nelcy_${kind}_layout_v3.xlsx`);
 }
 
 async function stableId(fields: string[]): Promise<string> {
@@ -157,12 +198,18 @@ async function stableId(fields: string[]): Promise<string> {
   const hash = await crypto.subtle.digest("SHA-256", contents);
   return `imp_${Array.from(new Uint8Array(hash)).map((x)=>x.toString(16).padStart(2,"0")).join("").slice(0,40)}`;
 }
-const signature = (m: ImportableMovement | Movement) => [
-  m.date, m.kind, m.fromEntityId ?? "", m.toEntityId ?? "", m.categoryId ?? "",
-  m.loanId ?? "", m.amountCents, m.taxCents, m.counterparty.toLocaleLowerCase("es"), m.description.toLocaleLowerCase("es"),
-].join("\u001f");
+const signature = (m: ImportableMovement | Movement) => {
+  const fields = [
+    m.date, m.kind, m.fromEntityId ?? "", m.toEntityId ?? "", m.categoryId ?? "",
+    m.loanId ?? "", m.amountCents, m.taxCents, m.counterparty.toLocaleLowerCase("es"), m.description.toLocaleLowerCase("es"),
+  ];
+  // Mantener exactamente la firma anterior cuando no hay cliente para no duplicar
+  // movimientos sin folio ya importados con layouts v2.
+  if (m.customerId) fields.push(m.customerId);
+  return fields.join("\u001f");
+};
 
-export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], existing: Movement[], orgId: string) {
+export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], customers: Customer[], existing: Movement[], orgId: string) {
   if (file.size > MAX_IMPORT_BYTES) throw new Error("El archivo supera los 5 MB. Divide la carga en varios Excel.");
   if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("Selecciona un archivo .xlsx generado con esta aplicación.");
   const ExcelJS = await excelJs();
@@ -170,13 +217,15 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   await wb.xlsx.load((await file.arrayBuffer()) as Parameters<typeof wb.xlsx.load>[0]);
   const info = wb.getWorksheet("Instrucciones");
   const ws = wb.getWorksheet("Movimientos");
-  if (!ws || !info || trimValue(info.getCell("B1").value) !== BULK_VERSION) {
+  const layoutVersion = info ? trimValue(info.getCell("B1").value) : "";
+  if (!ws || !info || ![BULK_VERSION, OLD_BULK_VERSION].includes(layoutVersion)) {
     throw new Error("Formato no reconocido. Descarga el layout de Nelcy y coloca allí tus registros.");
   }
   const kind = trimValue(info.getCell("B2").value) as MovementKind;
   if (!ALL_KINDS.includes(kind)) throw new Error("El tipo de movimiento del layout no es válido.");
-  for (let i = 0; i < BULK_HEADERS.length; i++) {
-    if (trimValue(ws.getCell(1, i+1).value) !== BULK_HEADERS[i]) throw new Error(`Encabezado incorrecto en columna ${i+1}. Usa un layout sin modificar.`);
+  const headers = layoutVersion === OLD_BULK_VERSION ? OLD_BULK_HEADERS : BULK_HEADERS;
+  for (let i = 0; i < headers.length; i++) {
+    if (trimValue(ws.getCell(1, i+1).value) !== headers[i]) throw new Error(`Encabezado incorrecto en columna ${i+1}. Usa un layout sin modificar.`);
   }
   if (ws.rowCount > MAX_IMPORT_ROWS + 1) throw new Error(`Máximo ${MAX_IMPORT_ROWS} filas por archivo. Divide la carga.`);
   const activeEntities = entities.filter((e)=>e.active);
@@ -191,7 +240,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   let totalCents = 0;
   const reservedPayments = new Map<string,number>();
   for (let row = 2; row <= ws.rowCount; row++) {
-    const values = Array.from({ length: BULK_HEADERS.length }, (_, col) => ws.getCell(row, col+1).value);
+    const values = Array.from({ length: headers.length }, (_, col) => ws.getCell(row, col+1).value);
     // El layout no contiene identificadores precargados. Ignorar filas totalmente vacías.
     if (values.every((v) => v === null || v === undefined || String(v).trim() === "")) continue;
     const errors: string[] = [];
@@ -209,9 +258,19 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     const category = pickByName(categoryText, categoriesOfKind);
     const amountCents = moneyValue(values[5]);
     const taxCents = trimValue(values[6]) === "" ? 0 : moneyValue(values[6]);
-    const counterparty = trimValue(values[7]);
-    const description = trimValue(values[8]);
-    const loanText = trimValue(values[9]);
+    const oldLayout = layoutVersion === OLD_BULK_VERSION;
+    const customerText = oldLayout ? "" : trimValue(values[7]);
+    const inputCounterparty = trimValue(values[oldLayout ? 7 : 8]);
+    const description = trimValue(values[oldLayout ? 8 : 9]);
+    const loanText = trimValue(values[oldLayout ? 9 : 10]);
+    const selectedCustomer = kind === "income" && to
+      ? customerFromText(customerText, to.id, customers, entities) : null;
+    const counterparty = selectedCustomer ? selectedCustomer.name : inputCounterparty;
+    if (customerText && kind !== "income") errors.push("El campo Cliente solo se utiliza para ingresos.");
+    if (kind === "income" && customerText && !selectedCustomer) errors.push("Cliente inexistente, inactivo o de otra compañía. Revisa la Entidad destino y la pestaña Catalogos.");
+    if (selectedCustomer && inputCounterparty && inputCounterparty.normalize("NFKC").trim().toLocaleLowerCase("es") !== selectedCustomer.name.normalize("NFKC").trim().toLocaleLowerCase("es")) {
+      errors.push("La contraparte no coincide con el cliente elegido. Déjala vacía o escribe el nombre del cliente.");
+    }
     const loan = loanFromText(loanText, existing);
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000) errors.push("Importe inválido: utiliza un número positivo con máximo dos decimales.");
     if (!Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents) errors.push("Impuesto inválido: no puede superar el importe.");
@@ -243,6 +302,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       categoryId: ordinary ? category?.id ?? null : null,
       loanId: kind === "loan_repayment" ? loan?.id ?? null : null,
       amountCents, taxCents, counterparty, description,
+      ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
       ...(userFolio ? { userFolio } : {}),
     };
     const rowSignature = signature(movement);
@@ -268,7 +328,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       totalCents += amountCents;
       if (kind === "loan_repayment" && loan) reservedPayments.set(loan.id, (reservedPayments.get(loan.id) ?? 0) + amountCents);
     }
-    rows.push({ row, userFolio, date, entityText: fromText || toText, amountCents, docId,
+    rows.push({ row, userFolio, date, entityText: fromText || toText, customerText: selectedCustomer?.name ?? customerText, amountCents, docId,
       data: errors.length ? null : movement, errors, warnings });
   }
   if (!rows.length) throw new Error("No hay movimientos para importar. Completa al menos una fila del Excel.");

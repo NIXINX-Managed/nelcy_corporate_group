@@ -17,6 +17,16 @@ export interface Category {
   kind: CategoryKind;
   active: boolean;
 }
+export interface Customer {
+  id: string;
+  companyId: string;
+  name: string;
+  code: string;
+  email: string;
+  phone: string;
+  notes: string;
+  active: boolean;
+}
 export interface Movement {
   id: string;
   date: string;
@@ -32,6 +42,7 @@ export interface Movement {
   createdBy: string;
   externalRef?: string;
   userFolio?: string;
+  customerId?: string;
 }
 
 export const movementLabels: Record<MovementKind, string> = {

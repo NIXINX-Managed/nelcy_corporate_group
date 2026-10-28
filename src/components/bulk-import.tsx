@@ -3,15 +3,15 @@
 import { useMemo, useState } from "react";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { firebaseServices, organizationId } from "@/lib/firebase";
-import type { Category, Entity, Movement, MovementKind } from "@/lib/finance";
+import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
 import { centsToMoney, movementLabels } from "@/lib/finance";
 import { ALL_KINDS, downloadLayout, MAX_IMPORT_ROWS, parseBulkFile, type PreviewLine } from "@/lib/bulk-excel";
 
-type Props = { entities: Entity[]; categories: Category[]; movements: Movement[]; uid: string };
+type Props = { entities: Entity[]; categories: Category[]; customers: Customer[]; movements: Movement[]; uid: string };
 type ImportResult = { saved: number; skipped: number; failed: number };
 const errorLabel = (error: unknown) => error instanceof Error ? error.message : "Error desconocido";
 
-export function BulkImport({ entities, categories, movements, uid }: Props) {
+export function BulkImport({ entities, categories, customers, movements, uid }: Props) {
   const [kind, setKind] = useState<MovementKind>("income");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<PreviewLine[]>([]);
@@ -39,7 +39,7 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
   async function download() {
     setStatus("");
     setParsing(true);
-    try { await downloadLayout(kind, entities, categories, movements); }
+    try { await downloadLayout(kind, entities, categories, customers, movements); }
     catch (err) { setStatus(`No se pudo generar el layout: ${errorLabel(err)}`); }
     finally { setParsing(false); }
   }
@@ -47,7 +47,7 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
     if (!file) return;
     setParsing(true); setResult(null); setIssues([]); setStatus(""); setPreview([]);
     try {
-      const parsed = await parseBulkFile(file, entities, categories, movements, organizationId);
+      const parsed = await parseBulkFile(file, entities, categories, customers, movements, organizationId);
       setPreview(parsed.rows); setPreviewKind(parsed.kind);
       setStatus(`Se revisaron ${parsed.rows.length} filas de ${movementLabels[parsed.kind]}. Comprueba el resultado antes de importar.`);
     } catch (err) { setStatus(`No se pudo validar: ${errorLabel(err)}`); }
@@ -97,7 +97,7 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
 
   return <div className="bulk-stack">
     <section className="panel"><div className="panel-title"><h2>1. Descargar layout de Excel</h2><span>Compatible con Microsoft Excel (.xlsx)</span></div>
-      <p>Selecciona el tipo de movimiento. El archivo incluirá empresas, conceptos activos, instrucciones y una columna opcional para tu folio. La referencia interna se genera al importar.</p>
+      <p>Selecciona el tipo de movimiento. La plantilla de ingresos incluye un desplegable de clientes activos vinculados a cada compañía, además de entidades, conceptos y folio opcional. La referencia interna se genera al importar.</p>
       <div className="bulk-toolbar">
         <label className="bulk-label">Tipo de operación
           <select value={kind} disabled={parsing || uploading} onChange={(e)=>setKind(e.target.value as MovementKind)}>
@@ -133,9 +133,9 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
       {counts.warnings > 0 && <label className="bulk-confirm"><input type="checkbox" checked={allowSimilar} disabled={uploading}
         onChange={(e)=>setAllowSimilar(e.target.checked)}/> Confirmo que las filas marcadas como posibles duplicados corresponden a operaciones distintas y deseo incluirlas.</label>}
       <div className="table-wrap"><table className="bulk-table"><thead><tr>
-        <th>Fila</th><th>Folio usuario</th><th>Fecha</th><th>Empresa / entidad</th><th>Monto</th><th>Resultado</th>
+        <th>Fila</th><th>Folio usuario</th><th>Fecha</th><th>Empresa / entidad</th><th>Cliente</th><th>Monto</th><th>Resultado</th>
       </tr></thead><tbody>{preview.slice(0, 250).map((r)=><tr key={r.row}>
-        <td>{r.row}</td><td>{r.userFolio || "—"}</td><td>{r.date || "—"}</td><td>{r.entityText || "—"}</td>
+        <td>{r.row}</td><td>{r.userFolio || "—"}</td><td>{r.date || "—"}</td><td>{r.entityText || "—"}</td><td>{r.customerText || "—"}</td>
         <td>{Number.isSafeInteger(r.amountCents) ? centsToMoney(r.amountCents) : "—"}</td>
         <td>{r.errors.length ? <span className="bulk-error">{r.errors.join(" · ")}</span> :
           r.warnings.length ? <span className="bulk-warn">{r.warnings.join(" · ")}</span> :

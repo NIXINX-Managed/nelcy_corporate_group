@@ -10,7 +10,7 @@ import {
   type User,
 } from "firebase/auth";
 import {
-  type Category, type CategoryKind, type Entity, type EntityType,
+  type Category, type CategoryKind, type Customer, type Entity, type EntityType,
   type Movement, type MovementKind, type UserRole,
   categoriesLabels, centsToMoney, dollarsToCents, movementLabels,
   profitability, selectedCashDelta,
@@ -18,8 +18,9 @@ import {
 import { firebaseServices, isFirebaseConfigured, organizationId } from "@/lib/firebase";
 import { BulkImport } from "@/components/bulk-import";
 import { CatalogImport } from "@/components/catalog-import";
+import { CustomerCatalog } from "@/components/customer-catalog";
 
-type Tab = "dashboard" | "movements" | "entities" | "categories";
+type Tab = "dashboard" | "movements" | "entities" | "categories" | "customers";
 type Status = "loading" | "login" | "unauthorized" | "ready" | "config-error";
 
 const dateToday = () => {
@@ -48,6 +49,7 @@ export default function Home() {
   const [retry, setRetry] = useState(0);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
   const [movementMode, setMovementMode] = useState<"single" | "bulk">("single");
@@ -68,6 +70,7 @@ export default function Home() {
   const [amount, setAmount] = useState("");
   const [tax, setTax] = useState("0");
   const [counterparty, setCounterparty] = useState("");
+  const [customerId, setCustomerId] = useState("");
   const [description, setDescription] = useState("");
   const [userFolio, setUserFolio] = useState("");
 
@@ -113,6 +116,9 @@ export default function Home() {
         }, fail));
         unsubscribers.push(onSnapshot(collection(org, "categories"), (snap) => {
           if (active) setCategories(readDocs<Category>(snap.docs));
+        }, fail));
+        unsubscribers.push(onSnapshot(collection(org, "customers"), (snap) => {
+          if (active) setCustomers(readDocs<Customer>(snap.docs));
         }, fail));
         unsubscribers.push(onSnapshot(collection(org, "movements"), (snap) => {
           if (active) setMovements(readDocs<Movement>(snap.docs));
@@ -185,6 +191,8 @@ export default function Home() {
     selectedEntity === "all" ? "Consolidado general · Empresas + personal" :
     entities.find((e) => e.id === selectedEntity)?.name ?? "Entidad no encontrada";
   const availableCategories = categories.filter((c) => c.active && c.kind === entryKind);
+  const incomeCompany = entryKind === "income" && entities.some((e) => e.id === toEntityId && e.type === "company" && e.active);
+  const incomeCustomers = customers.filter((c) => c.companyId === toEntityId && c.active).sort((a, b) => a.name.localeCompare(b.name));
   const isOrdinary = ["income", "cost", "expense"].includes(entryKind);
   const isIncoming = entryKind === "income";
   const isOutgoing = entryKind === "cost" || entryKind === "expense";
@@ -251,6 +259,13 @@ export default function Home() {
       amountCents > selectedLoan.outstanding)) {
       setNotice("Selecciona el préstamo original, invierte correctamente las entidades y verifica el saldo."); return;
     }
+    const selectedCustomer = entryKind === "income" && customerId
+      ? customers.find((c) => c.id === customerId && c.companyId === actualTo && c.active)
+      : null;
+    if (entryKind === "income" && customerId && !selectedCustomer) {
+      setNotice("Selecciona un cliente activo perteneciente a la compañía que recibe el ingreso.");
+      return;
+    }
     setBusy(true); setNotice("");
     try {
       await addDoc(collection(firebaseServices().db, "organizations", organizationId, "movements"), {
@@ -258,11 +273,13 @@ export default function Home() {
         fromEntityId: actualFrom, toEntityId: actualTo,
         categoryId: isOrdinary ? categoryId : null,
         loanId: entryKind === "loan_repayment" ? loanId : null,
-        counterparty: counterparty.trim(), description: description.trim(),
+        counterparty: selectedCustomer ? selectedCustomer.name : counterparty.trim(),
+        ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
+        description: description.trim(),
         ...(userFolio.trim() ? { userFolio: userFolio.trim() } : {}),
         amountCents, taxCents, createdAt: serverTimestamp(), createdBy: user.uid,
       });
-      setAmount(""); setTax("0"); setCounterparty(""); setDescription(""); setUserFolio(""); setLoanId("");
+      setAmount(""); setTax("0"); setCounterparty(""); setCustomerId(""); setDescription(""); setUserFolio(""); setLoanId("");
       setNotice("Movimiento guardado en Firestore.");
     } catch (error) { setNotice(messageFromError(error)); }
     finally { setBusy(false); }
@@ -294,7 +311,7 @@ export default function Home() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-icon">N</div>
-        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.3</span></div>
+        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.4</span></div>
       </div>
       <div className="account"><span>{user?.email}</span><span className="role-tag">{role}</span>
         <button className="button-secondary" onClick={() => signOut(firebaseServices().auth)}>Salir</button></div>
@@ -302,7 +319,7 @@ export default function Home() {
     <div className="workspace">
       <nav className="nav-tabs" aria-label="Secciones">
         {([ ["dashboard", "Resumen"], ["movements", "Movimientos"],
-          ["entities", "Empresas y personal"], ["categories", "Catálogos"] ] as const).map(([id, label]) =>
+          ["entities", "Empresas y personal"], ["customers", "Clientes"], ["categories", "Catálogos"] ] as const).map(([id, label]) =>
           <button key={id} className={tab === id ? "active" : ""} onClick={() => { setTab(id); setNotice(""); }}>{label}</button>)}
       </nav>
       <section className="scope-bar" aria-label="Seleccionar perspectiva de información">
@@ -387,6 +404,14 @@ export default function Home() {
           <div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Estado</th><th>Ver</th></tr></thead><tbody>{sortedEntities.map((e) => <tr key={e.id}><td>{e.name}</td><td>{e.type === "personal" ? "Personal" : "Empresa"}</td><td>{e.active ? "Activa" : "Inactiva"}</td><td><button type="button" className="button-link" onClick={() => { setSelectedEntity(e.id); setTab("dashboard"); }}>Ver resultados</button></td></tr>)}</tbody></table></div>
           {!entities.length && <p className="empty">Primero crea una empresa y una entidad personal si necesitas registrar retiros.</p>}</section></>}
 
+      {tab === "customers" && <>
+        <section className="section-heading"><div><p className="eyebrow">RELACIONES COMERCIALES</p>
+          <h1>Clientes por compañía</h1><p>Registra y consulta los clientes de cada empresa, sin mezclarlos con el ámbito personal.</p>
+        </div></section>
+        <CustomerCatalog entities={entities} customers={customers} selectedEntity={selectedEntity}
+          uid={user?.uid ?? ""} canWrite={canWrite} />
+      </>}
+
       {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos reutilizables de ingresos, costos y gastos.</p></div></section>
         {canWrite && <form className="form-panel" onSubmit={createCategory}><label>Concepto<input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="Ej. Venta de servicios" maxLength={100} required /></label>
           <label>Clasificación<select value={categoryKind} onChange={(e) => setCategoryKind(e.target.value as CategoryKind)}>
@@ -404,15 +429,15 @@ export default function Home() {
           <button className={movementMode === "single" ? "active" : ""} type="button" onClick={() => setMovementMode("single")}>Captura individual</button>
           <button className={movementMode === "bulk" ? "active" : ""} type="button" onClick={() => setMovementMode("bulk")}>Importación masiva Excel</button>
         </div>}
-        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} movements={movements} uid={user.uid} />}
+        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} uid={user.uid} />}
         {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Los movimientos guardados no pueden editarse en v0.1</span></div>
           <div className="form-grid">
-            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); }}>
+            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); }}>
               {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
             <label>Fecha<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label>
             {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => setFromEntityId(e.target.value)}><option value="">Seleccionar origen</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
-            {needsTo && <label>Entidad de destino<select required value={toEntityId} onChange={(e) => setToEntityId(e.target.value)}><option value="">Seleccionar destino</option>
+            {needsTo && <label>Entidad de destino<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); }}><option value="">Seleccionar destino</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
             {isOrdinary && <label>Concepto<select required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="">Seleccionar concepto</option>
               {availableCategories.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select></label>}
@@ -421,19 +446,30 @@ export default function Home() {
               if (original) { setFromEntityId(original.toEntityId ?? ""); setToEntityId(original.fromEntityId ?? ""); }
             }}><option value="">Seleccionar préstamo</option>
               {loanBalances.filter((l) => l.outstanding > 0).map((loan) => <option key={loan.id} value={loan.id}>{loan.date}: {nameOf(loan.fromEntityId)} → {nameOf(loan.toEntityId)} ({centsToMoney(loan.outstanding)})</option>)}</select></label>}
+            {entryKind === "income" && <label>Cliente de la compañía (opcional)
+              <select value={customerId} disabled={!incomeCompany} onChange={(e) => { const id = e.target.value; setCustomerId(id); if (id) setCounterparty(""); }}>
+                <option value="">{!toEntityId ? "Primero selecciona una compañía de destino" : !incomeCompany ? "Solo disponible para compañías activas" : "Sin cliente vinculado / venta general"}</option>
+                {incomeCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.code ? ` · ${c.code}` : ""}</option>)}
+              </select>
+              {incomeCompany && !incomeCustomers.length && <span className="field-hint">No hay clientes activos para esta empresa. Regístralos en Clientes.</span>}
+            </label>}
             <label>Importe total (CAD)<input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1000.00" inputMode="decimal" /></label>
             {isOrdinary && <label>Impuestos incluidos (CAD)<input required value={tax} onChange={(e) => setTax(e.target.value)} placeholder="0.00" inputMode="decimal" /></label>}
             <label>Folio del usuario (opcional)<input value={userFolio} maxLength={100} onChange={(e) => setUserFolio(e.target.value)} placeholder="Factura, recibo o folio interno" /></label>
-            <label>Contraparte / proveedor<input value={counterparty} maxLength={160} onChange={(e) => setCounterparty(e.target.value)} placeholder="Opcional" /></label>
+            <label>{entryKind === "income" ? "Contraparte libre (si no hay cliente vinculado)" : "Contraparte / proveedor"}
+              <input value={customerId && entryKind === "income" ? customers.find((c) => c.id === customerId)?.name ?? "" : counterparty}
+                disabled={entryKind === "income" && Boolean(customerId)} maxLength={160} onChange={(e) => setCounterparty(e.target.value)}
+                placeholder={entryKind === "income" ? "Venta general o cliente no registrado" : "Opcional"} />
+            </label>
             <label className="wide">Observaciones<input value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} placeholder="Referencia, factura o motivo" /></label>
           </div><div className="form-actions"><p>Una transferencia interna cambia el efectivo, pero no la utilidad del grupo.</p>
             <button className="button-primary" disabled={busy || !entities.length}>{busy ? "Guardando…" : "Guardar movimiento"}</button></div>
         </form>}
         <section className="panel"><div className="panel-title"><h2>Historial de movimientos</h2><span>{filteredHistory.length} en esta vista · {movements.length} globales</span></div>
           <p className="small-note">Historial filtrado por: <strong>{perspectiveLabel}</strong> · {year}. Cambia la vista en la barra superior. Las transferencias se muestran desde ambas entidades, sin duplicarlas en el consolidado.</p>
-          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Contraparte</th><th>Importe</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Cliente</th><th>Contraparte</th><th>Importe</th></tr></thead>
             <tbody>{filteredHistory.slice(0, 200).map((m) => <tr key={m.id}>
-              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td></tr>)}</tbody></table></div>
+              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.customerId ? (m.counterparty || customers.find((c) => c.id === m.customerId)?.name || "—") : "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td></tr>)}</tbody></table></div>
           {!filteredHistory.length && <p className="empty">No hay movimientos en la perspectiva y ejercicio seleccionados.</p>}
           {filteredHistory.length > 200 && <p className="small-note">Vista preliminar: se muestran los 200 movimientos más recientes.</p>}
         </section>

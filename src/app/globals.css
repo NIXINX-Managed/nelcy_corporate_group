@@ -19,3 +19,13 @@ h1,h2,p{margin-top:0}h1{font-size:clamp(24px,3vw,30px);letter-spacing:-.035em;ma
 .form-grid>label,.form-panel>label{min-width:0;max-width:100%}
 .form-grid input,.form-grid select,.form-panel input,.form-panel select{min-width:0;max-width:100%}
 @media(max-width:550px){.scope-bar{padding:12px;align-items:stretch}.scope-filters{width:100%;flex:1 1 100%}.scope-filters label:first-child{max-width:none}.form-grid input[type=date]{width:100%;min-width:0;max-width:100%;box-sizing:border-box}}
+
+/* Catálogo de clientes por compañía */
+.customer-section{min-width:0}.customer-section .form-grid input,.customer-section .form-grid select{box-sizing:border-box;max-width:100%;min-width:0;width:100%}
+.customer-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;margin-top:18px}
+.customer-actions .small-note{margin:0 auto 0 0;flex:1;min-width:200px}
+.customer-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:16px}
+.customer-filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:650;color:#58677c;min-width:180px;flex:1}
+.customer-filters input,.customer-filters select{height:40px;border:1px solid #dbe3ed;background:#fff;border-radius:7px;padding:0 11px;max-width:100%;min-width:0}
+.customer-row-actions{display:flex;gap:4px}.field-hint{font-weight:400;color:#728099;font-size:11px}
+@media(max-width:550px){.customer-actions{align-items:stretch;flex-direction:column}.customer-actions .small-note{width:100%}.customer-filters label{min-width:100%}.customer-row-actions{flex-wrap:wrap}}
