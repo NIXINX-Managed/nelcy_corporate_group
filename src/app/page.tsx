@@ -16,6 +16,8 @@ import {
   profitability, selectedCashDelta,
 } from "@/lib/finance";
 import { firebaseServices, isFirebaseConfigured, organizationId } from "@/lib/firebase";
+import { BulkImport } from "@/components/bulk-import";
+import { CatalogImport } from "@/components/catalog-import";
 
 type Tab = "dashboard" | "movements" | "entities" | "categories";
 type Status = "loading" | "login" | "unauthorized" | "ready" | "config-error";
@@ -48,6 +50,7 @@ export default function Home() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [movementMode, setMovementMode] = useState<"single" | "bulk">("single");
   const [year, setYear] = useState("");
   const [selectedEntity, setSelectedEntity] = useState("companies");
   const [notice, setNotice] = useState("");
@@ -346,6 +349,7 @@ export default function Home() {
         {canWrite && <form className="form-panel" onSubmit={createEntity}><label>Nombre<input value={entityName} onChange={(e) => setEntityName(e.target.value)} placeholder="Ej. Cataleya Contracting Inc." maxLength={100} required /></label>
           <label>Tipo<select value={entityType} onChange={(e) => setEntityType(e.target.value as EntityType)}><option value="company">Empresa</option><option value="personal">Personal</option></select></label>
           <button className="button-primary" disabled={busy}>Crear entidad</button></form>}
+        {canWrite && user && <CatalogImport catalogType="entities" entities={entities} categories={categories} uid={user.uid} />}
         <section className="panel"><div className="panel-title"><h2>Entidades configuradas</h2><span>{entities.length} registradas</span></div>
           <div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Estado</th></tr></thead><tbody>{sortedEntities.map((e) => <tr key={e.id}><td>{e.name}</td><td>{e.type === "personal" ? "Personal" : "Empresa"}</td><td>{e.active ? "Activa" : "Inactiva"}</td></tr>)}</tbody></table></div>
           {!entities.length && <p className="empty">Primero crea una empresa y una entidad personal si necesitas registrar retiros.</p>}</section></>}
@@ -355,6 +359,7 @@ export default function Home() {
           <label>Clasificación<select value={categoryKind} onChange={(e) => setCategoryKind(e.target.value as CategoryKind)}>
             {Object.entries(categoriesLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
           <button className="button-primary" disabled={busy}>Crear concepto</button></form>}
+        {canWrite && user && <CatalogImport catalogType="categories" entities={entities} categories={categories} uid={user.uid} />}
         <section className="panel"><div className="panel-title"><h2>Conceptos configurados</h2><span>{categories.length} registrados</span></div>
           <div className="table-wrap"><table><thead><tr><th>Concepto</th><th>Clasificación</th><th>Estado</th></tr></thead><tbody>{categories.slice().sort((a,b) => a.name.localeCompare(b.name)).map((c) =>
             <tr key={c.id}><td>{c.name}</td><td>{categoriesLabels[c.kind]}</td><td>{c.active ? "Activo" : "Inactivo"}</td></tr>)}</tbody></table></div>
@@ -362,7 +367,12 @@ export default function Home() {
 
       {tab === "movements" && <><section className="section-heading"><div><p className="eyebrow">OPERACIÓN</p><h1>Registro de movimientos</h1>
         <p>Un préstamo o transferencia se registra una sola vez y aparece en las dos entidades.</p></div></section>
-        {canWrite && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Los movimientos guardados no pueden editarse en v0.1</span></div>
+        {canWrite && <div className="bulk-mode-tabs" role="group" aria-label="Modo de captura">
+          <button className={movementMode === "single" ? "active" : ""} type="button" onClick={() => setMovementMode("single")}>Captura individual</button>
+          <button className={movementMode === "bulk" ? "active" : ""} type="button" onClick={() => setMovementMode("bulk")}>Importación masiva Excel</button>
+        </div>}
+        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} movements={movements} uid={user.uid} />}
+        {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Los movimientos guardados no pueden editarse en v0.1</span></div>
           <div className="form-grid">
             <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); }}>
               {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
