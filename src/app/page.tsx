@@ -69,6 +69,7 @@ export default function Home() {
   const [tax, setTax] = useState("0");
   const [counterparty, setCounterparty] = useState("");
   const [description, setDescription] = useState("");
+  const [userFolio, setUserFolio] = useState("");
 
   useEffect(() => {
     const today = dateToday();
@@ -168,6 +169,21 @@ export default function Home() {
     outstanding: loan.amountCents - movements.filter((m) => m.kind === "loan_repayment" && m.loanId === loan.id)
       .reduce((sum, m) => sum + m.amountCents, 0),
   })), [loans, movements]);
+  const viewLoanBalances = loans.filter((loan) =>
+    loan.date <= `${year}-12-31` &&
+    ((loan.fromEntityId && selectedIds.has(loan.fromEntityId)) ||
+      (loan.toEntityId && selectedIds.has(loan.toEntityId))))
+    .map((loan) => ({ ...loan, outstanding: loan.amountCents - movements.filter((m) =>
+      m.kind === "loan_repayment" && m.loanId === loan.id && m.date <= `${year}-12-31`)
+      .reduce((sum, m) => sum + m.amountCents, 0) }));
+  const filteredHistory = useMemo(() => movements.filter((m) =>
+    m.date.startsWith(`${year}-`) &&
+    ((m.fromEntityId && selectedIds.has(m.fromEntityId)) ||
+      (m.toEntityId && selectedIds.has(m.toEntityId)))
+  ).sort((a,b) => b.date.localeCompare(a.date)), [movements, year, selectedIds]);
+  const perspectiveLabel = selectedEntity === "companies" ? "Todas las empresas" :
+    selectedEntity === "all" ? "Consolidado general · Empresas + personal" :
+    entities.find((e) => e.id === selectedEntity)?.name ?? "Entidad no encontrada";
   const availableCategories = categories.filter((c) => c.active && c.kind === entryKind);
   const isOrdinary = ["income", "cost", "expense"].includes(entryKind);
   const isIncoming = entryKind === "income";
@@ -243,9 +259,10 @@ export default function Home() {
         categoryId: isOrdinary ? categoryId : null,
         loanId: entryKind === "loan_repayment" ? loanId : null,
         counterparty: counterparty.trim(), description: description.trim(),
+        ...(userFolio.trim() ? { userFolio: userFolio.trim() } : {}),
         amountCents, taxCents, createdAt: serverTimestamp(), createdBy: user.uid,
       });
-      setAmount(""); setTax("0"); setCounterparty(""); setDescription(""); setLoanId("");
+      setAmount(""); setTax("0"); setCounterparty(""); setDescription(""); setUserFolio(""); setLoanId("");
       setNotice("Movimiento guardado en Firestore.");
     } catch (error) { setNotice(messageFromError(error)); }
     finally { setBusy(false); }
@@ -277,7 +294,7 @@ export default function Home() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-icon">N</div>
-        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.1</span></div>
+        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.3</span></div>
       </div>
       <div className="account"><span>{user?.email}</span><span className="role-tag">{role}</span>
         <button className="button-secondary" onClick={() => signOut(firebaseServices().auth)}>Salir</button></div>
@@ -288,18 +305,34 @@ export default function Home() {
           ["entities", "Empresas y personal"], ["categories", "Catálogos"] ] as const).map(([id, label]) =>
           <button key={id} className={tab === id ? "active" : ""} onClick={() => { setTab(id); setNotice(""); }}>{label}</button>)}
       </nav>
+      <section className="scope-bar" aria-label="Seleccionar perspectiva de información">
+        <div className="scope-description"><strong>Vista activa: {perspectiveLabel}</strong>
+          <span>Los reportes y el historial muestran solo esta perspectiva. Los movimientos entre entidades siguen vinculados a ambos lados.</span></div>
+        <div className="filters scope-filters">
+          <label>Ejercicio<select value={year} onChange={(e) => setYear(e.target.value)}>
+            {Array.from(new Set([year, ...movements.map((m) => m.date.slice(0, 4))])).filter(Boolean)
+              .sort().reverse().map((y) => <option key={y}>{y}</option>)}
+          </select></label>
+          <label>Compañía / vista<select value={selectedEntity} onChange={(e) => setSelectedEntity(e.target.value)}>
+            <option value="companies">Todas las empresas</option>
+            <option value="all">Consolidado general (+ personal)</option>
+            <optgroup label="Empresas">
+              {sortedEntities.filter((e) => e.type === "company").map((e) =>
+                <option key={e.id} value={e.id}>{e.name}</option>)}
+            </optgroup>
+            <optgroup label="Personal">
+              {sortedEntities.filter((e) => e.type === "personal").map((e) =>
+                <option key={e.id} value={e.id}>{e.name}</option>)}
+            </optgroup>
+          </select></label>
+        </div>
+        {!entities.length && <button type="button" className="button-secondary" onClick={() => setTab("entities")}>Crear primera compañía</button>}
+      </section>
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice("")}>×</button></div>}
 
       {tab === "dashboard" && <>
         <section className="section-heading"><div><p className="eyebrow">VISIÓN FINANCIERA</p><h1>Dashboard</h1>
           <p>Rentabilidad y variación neta de efectivo, sin duplicar transferencias internas.</p></div>
-          <div className="filters"><label>Ejercicio<select value={year} onChange={(e) => setYear(e.target.value)}>
-              {Array.from(new Set([year, ...movements.map((m) => m.date.slice(0, 4))])).filter(Boolean)
-                .sort().reverse().map((y) => <option key={y}>{y}</option>)}
-            </select></label><label>Perspectiva<select value={selectedEntity} onChange={(e) => setSelectedEntity(e.target.value)}>
-              <option value="companies">Todas las empresas</option><option value="all">Consolidado + personal</option>
-              {sortedEntities.map((e) => <option key={e.id} value={e.id}>{e.name} {e.type === "personal" ? "· Personal" : ""}</option>)}
-            </select></label></div>
         </section>
         <section className="stats-grid">
           <Stat label="Ingresos netos" value={finance.income} tone="teal" />
@@ -336,8 +369,8 @@ export default function Home() {
               </div><span>{m.label}</span></div>; })}</div>
           </section>
           <section className="panel"><div className="panel-title"><h2>Préstamos internos</h2><span>Saldo nominal registrado</span></div>
-            {loanBalances.length ? <div className="table-wrap"><table><thead><tr><th>De → Para</th><th>Fecha</th><th>Pendiente</th></tr></thead><tbody>
-              {loanBalances.map((m) => <tr key={m.id}><td>{nameOf(m.fromEntityId)} → {nameOf(m.toEntityId)}</td><td>{m.date}</td>
+            {viewLoanBalances.length ? <div className="table-wrap"><table><thead><tr><th>De → Para</th><th>Fecha</th><th>Pendiente</th></tr></thead><tbody>
+              {viewLoanBalances.map((m) => <tr key={m.id}><td>{nameOf(m.fromEntityId)} → {nameOf(m.toEntityId)}</td><td>{m.date}</td>
                 <td className={m.outstanding < 0 ? "negative" : ""}>{centsToMoney(m.outstanding)}</td></tr>)}
             </tbody></table></div> : <p className="empty">Todavía no hay préstamos registrados.</p>}
           </section>
@@ -345,13 +378,13 @@ export default function Home() {
         <p className="disclaimer">Indicadores gerenciales preliminares, no estados financieros certificados. El importe incluye impuestos y la rentabilidad excluye la porción de impuesto capturada. La variación de efectivo refleja movimientos registrados durante el período, no el saldo bancario disponible ni el flujo contable ajustado.</p>
       </>}
 
-      {tab === "entities" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Empresas y ámbito personal</h1><p>Las entidades son independientes, pero pueden transferirse recursos entre sí.</p></div></section>
+      {tab === "entities" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Empresas y ámbito personal</h1><p>Crea aquí cada compañía (Tipo: Empresa) y el ámbito de la propietaria (Tipo: Personal). Después selecciónalos desde «Compañía / vista» en la barra superior.</p></div></section>
         {canWrite && <form className="form-panel" onSubmit={createEntity}><label>Nombre<input value={entityName} onChange={(e) => setEntityName(e.target.value)} placeholder="Ej. Cataleya Contracting Inc." maxLength={100} required /></label>
           <label>Tipo<select value={entityType} onChange={(e) => setEntityType(e.target.value as EntityType)}><option value="company">Empresa</option><option value="personal">Personal</option></select></label>
-          <button className="button-primary" disabled={busy}>Crear entidad</button></form>}
+          <button className="button-primary" disabled={busy}>Crear {entityType === "company" ? "compañía" : "ámbito personal"}</button></form>}
         {canWrite && user && <CatalogImport catalogType="entities" entities={entities} categories={categories} uid={user.uid} />}
         <section className="panel"><div className="panel-title"><h2>Entidades configuradas</h2><span>{entities.length} registradas</span></div>
-          <div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Estado</th></tr></thead><tbody>{sortedEntities.map((e) => <tr key={e.id}><td>{e.name}</td><td>{e.type === "personal" ? "Personal" : "Empresa"}</td><td>{e.active ? "Activa" : "Inactiva"}</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Estado</th><th>Ver</th></tr></thead><tbody>{sortedEntities.map((e) => <tr key={e.id}><td>{e.name}</td><td>{e.type === "personal" ? "Personal" : "Empresa"}</td><td>{e.active ? "Activa" : "Inactiva"}</td><td><button type="button" className="button-link" onClick={() => { setSelectedEntity(e.id); setTab("dashboard"); }}>Ver resultados</button></td></tr>)}</tbody></table></div>
           {!entities.length && <p className="empty">Primero crea una empresa y una entidad personal si necesitas registrar retiros.</p>}</section></>}
 
       {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos reutilizables de ingresos, costos y gastos.</p></div></section>
@@ -390,18 +423,19 @@ export default function Home() {
               {loanBalances.filter((l) => l.outstanding > 0).map((loan) => <option key={loan.id} value={loan.id}>{loan.date}: {nameOf(loan.fromEntityId)} → {nameOf(loan.toEntityId)} ({centsToMoney(loan.outstanding)})</option>)}</select></label>}
             <label>Importe total (CAD)<input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1000.00" inputMode="decimal" /></label>
             {isOrdinary && <label>Impuestos incluidos (CAD)<input required value={tax} onChange={(e) => setTax(e.target.value)} placeholder="0.00" inputMode="decimal" /></label>}
+            <label>Folio del usuario (opcional)<input value={userFolio} maxLength={100} onChange={(e) => setUserFolio(e.target.value)} placeholder="Factura, recibo o folio interno" /></label>
             <label>Contraparte / proveedor<input value={counterparty} maxLength={160} onChange={(e) => setCounterparty(e.target.value)} placeholder="Opcional" /></label>
             <label className="wide">Observaciones<input value={description} maxLength={500} onChange={(e) => setDescription(e.target.value)} placeholder="Referencia, factura o motivo" /></label>
           </div><div className="form-actions"><p>Una transferencia interna cambia el efectivo, pero no la utilidad del grupo.</p>
             <button className="button-primary" disabled={busy || !entities.length}>{busy ? "Guardando…" : "Guardar movimiento"}</button></div>
         </form>}
-        <section className="panel"><div className="panel-title"><h2>Historial de movimientos</h2><span>{movements.length} registros en total</span></div>
-          <p className="small-note">El listado incluye todas las entidades y ejercicios. Los filtros del dashboard se aplican solo a sus reportes.</p>
-          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Contraparte</th><th>Importe</th></tr></thead>
-            <tbody>{movements.slice().sort((a,b) => b.date.localeCompare(a.date)).slice(0, 200).map((m) => <tr key={m.id}>
-              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td></tr>)}</tbody></table></div>
-          {!movements.length && <p className="empty">No hay movimientos registrados todavía.</p>}
-          {movements.length > 200 && <p className="small-note">Vista preliminar: se muestran los 200 movimientos más recientes.</p>}
+        <section className="panel"><div className="panel-title"><h2>Historial de movimientos</h2><span>{filteredHistory.length} en esta vista · {movements.length} globales</span></div>
+          <p className="small-note">Historial filtrado por: <strong>{perspectiveLabel}</strong> · {year}. Cambia la vista en la barra superior. Las transferencias se muestran desde ambas entidades, sin duplicarlas en el consolidado.</p>
+          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Contraparte</th><th>Importe</th></tr></thead>
+            <tbody>{filteredHistory.slice(0, 200).map((m) => <tr key={m.id}>
+              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td></tr>)}</tbody></table></div>
+          {!filteredHistory.length && <p className="empty">No hay movimientos en la perspectiva y ejercicio seleccionados.</p>}
+          {filteredHistory.length > 200 && <p className="small-note">Vista preliminar: se muestran los 200 movimientos más recientes.</p>}
         </section>
       </>}
     </div>

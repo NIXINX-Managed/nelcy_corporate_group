@@ -30,6 +30,8 @@ export interface Movement {
   amountCents: number;
   taxCents: number;
   createdBy: string;
+  externalRef?: string;
+  userFolio?: string;
 }
 
 export const movementLabels: Record<MovementKind, string> = {

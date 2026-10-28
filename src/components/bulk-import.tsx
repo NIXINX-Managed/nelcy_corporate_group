@@ -71,7 +71,10 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
           const already = await getDoc(ref);
           if (already.exists()) { stats.skipped++; }
           else {
-            await setDoc(ref, { ...item.data, importBatchId: batchId, importRow: item.row,
+            // Solo al confirmar la importación asignamos la referencia interna.
+            // El ID determinista permite reintentar el mismo archivo sin duplicar datos.
+            const externalRef = `IMP-${item.docId.slice(4, 24).toUpperCase()}`;
+            await setDoc(ref, { ...item.data, externalRef, importBatchId: batchId, importRow: item.row,
               createdBy: uid, createdAt: serverTimestamp() });
             stats.saved++;
           }
@@ -94,7 +97,7 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
 
   return <div className="bulk-stack">
     <section className="panel"><div className="panel-title"><h2>1. Descargar layout de Excel</h2><span>Compatible con Microsoft Excel (.xlsx)</span></div>
-      <p>Selecciona el tipo de movimiento. El archivo incluirá empresas, conceptos activos, instrucciones y referencias únicas por fila.</p>
+      <p>Selecciona el tipo de movimiento. El archivo incluirá empresas, conceptos activos, instrucciones y una columna opcional para tu folio. La referencia interna se genera al importar.</p>
       <div className="bulk-toolbar">
         <label className="bulk-label">Tipo de operación
           <select value={kind} disabled={parsing || uploading} onChange={(e)=>setKind(e.target.value as MovementKind)}>
@@ -126,13 +129,13 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
         <div><strong>{counts.invalid}</strong><span>Con errores</span></div>
         <div><strong>{counts.warnings}</strong><span>Posibles duplicados</span></div>
       </div>
-      <p className="small-note">Los registros con errores nunca se guardarán. Las coincidencias con movimientos existentes se excluyen a menos que confirmes que son operaciones distintas.</p>
+      <p className="small-note">Los errores no se guardan. Los posibles duplicados requieren confirmación. Si dos operaciones realmente idénticas deben registrarse por separado, asigna folios diferentes en Excel.</p>
       {counts.warnings > 0 && <label className="bulk-confirm"><input type="checkbox" checked={allowSimilar} disabled={uploading}
         onChange={(e)=>setAllowSimilar(e.target.checked)}/> Confirmo que las filas marcadas como posibles duplicados corresponden a operaciones distintas y deseo incluirlas.</label>}
       <div className="table-wrap"><table className="bulk-table"><thead><tr>
-        <th>Fila</th><th>Referencia</th><th>Fecha</th><th>Empresa / entidad</th><th>Monto</th><th>Resultado</th>
+        <th>Fila</th><th>Folio usuario</th><th>Fecha</th><th>Empresa / entidad</th><th>Monto</th><th>Resultado</th>
       </tr></thead><tbody>{preview.slice(0, 250).map((r)=><tr key={r.row}>
-        <td>{r.row}</td><td>{r.reference}</td><td>{r.date || "—"}</td><td>{r.entityText || "—"}</td>
+        <td>{r.row}</td><td>{r.userFolio || "—"}</td><td>{r.date || "—"}</td><td>{r.entityText || "—"}</td>
         <td>{Number.isSafeInteger(r.amountCents) ? centsToMoney(r.amountCents) : "—"}</td>
         <td>{r.errors.length ? <span className="bulk-error">{r.errors.join(" · ")}</span> :
           r.warnings.length ? <span className="bulk-warn">{r.warnings.join(" · ")}</span> :
@@ -141,7 +144,7 @@ export function BulkImport({ entities, categories, movements, uid }: Props) {
       {preview.length > 250 && <p className="small-note">Se muestran las primeras 250 filas. Se valida la totalidad del archivo.</p>}
       <div className="bulk-actions">
         <div><strong>{counts.ready}</strong> registros por confirmar.
-          <p className="small-note">El proceso guarda registros individualmente; si se interrumpe, puedes volver a cargar el mismo archivo.</p>
+          <p className="small-note">El proceso guarda registros individualmente; si se interrumpe, puedes volver a cargar el mismo archivo sin duplicar sus filas identificadas.</p>
         </div>
         <button type="button" className="button-primary" disabled={uploading || parsing || counts.ready === 0} onClick={upload}>
           {uploading ? `Guardando ${progress.done}/${progress.total}…` : `Confirmar importación (${counts.ready})`}

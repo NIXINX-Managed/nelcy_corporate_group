@@ -1,9 +1,9 @@
 import type { Category, Entity, Movement, MovementKind } from "@/lib/finance";
 import { dollarsToCents, movementLabels } from "@/lib/finance";
 
-export const BULK_VERSION = "NELCY-LAYOUT-1";
+export const BULK_VERSION = "NELCY-LAYOUT-2";
 export const BULK_HEADERS = [
-  "Referencia externa", "Fecha (AAAA-MM-DD)", "Entidad origen", "Entidad destino",
+  "Folio del usuario (opcional)", "Fecha (AAAA-MM-DD)", "Entidad origen", "Entidad destino",
   "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
   "Contraparte / proveedor", "Observaciones", "ID préstamo original",
 ] as const;
@@ -23,11 +23,11 @@ export type ImportableMovement = {
   description: string;
   amountCents: number;
   taxCents: number;
-  externalRef: string;
+  userFolio?: string;
 };
 export type PreviewLine = {
   row: number;
-  reference: string;
+  userFolio: string;
   date: string;
   entityText: string;
   amountCents: number;
@@ -110,14 +110,15 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   info.addRow(["Tipo de operación", kind]);
   info.addRow(["Nombre", movementLabels[kind]]);
   info.addRow(["Uso", "Una hoja por tipo de operación. No renombrar 'Movimientos' ni cambiar los encabezados."]);
-  info.addRow(["Referencia externa", "Obligatoria y única para cada operación. Ya se generan referencias por fila; puedes sustituirlas por un folio estable del sistema origen."]);
+  info.addRow(["Folio del usuario", "Opcional. Puedes escribir tu factura/folio. La referencia interna se genera únicamente al confirmar la importación, nunca en el layout ni en la vista previa."]);
   info.addRow(["Fecha", "AAAA-MM-DD. También puedes usar una fecha real de Excel."]);
   info.addRow(["Impuestos", "Incluidos en el total. No se agregan al importe. Cero para préstamos, retiros y transferencias."]);
   info.addRow(["Catálogos", "Usa los valores de las listas de Excel o los IDs exactos mostrados en la pestaña Catálogos."]);
   info.addRow(["Préstamos", "Para abonos, indica un préstamo existente y usa origen/destino invertidos."]);
   info.addRow(["Seguridad", "El archivo se valida en el navegador. Se guardan los movimientos confirmados, no el Excel."]);
+  info.addRow(["Reimportación", "Con folio: se impide repetir el mismo folio por tipo y entidades. Sin folio: se detecta por contenido y ocurrencia; si dos movimientos son iguales usa folios diferentes."]);
   info.getRow(1).font = { bold: true, size: 13, color: { argb: "FF12365B" } };
-  for (let i = 1; i <= 10; i++) { info.getCell(i, 1).font = { bold: true }; info.getRow(i).height = 26; }
+  for (let i = 1; i <= 11; i++) { info.getCell(i, 1).font = { bold: true }; info.getRow(i).height = 26; }
   const catalog = wb.addWorksheet("Catalogos");
   const active = entities.filter((e) => e.active).sort((a,b) => a.name.localeCompare(b.name));
   const relevant = categories.filter((c) => c.active && c.kind === kind).sort((a,b) => a.name.localeCompare(b.name));
@@ -129,7 +130,7 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   catalog.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   catalog.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244C7D" } };
   const ws = wb.addWorksheet("Movimientos", { views: [{ state: "frozen", ySplit: 1 }] });
-  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [27, 22, 52, 52, 52, 23, 27, 35, 55, 70][i] }));
+  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [30, 22, 52, 52, 52, 23, 27, 35, 55, 70][i] }));
   ws.getRow(1).height = 33;
   ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D365A" } };
@@ -138,7 +139,6 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   if (relevant.length) wb.definedNames.add(`Catalogos!$B$2:$B$${relevant.length + 1}`, "ListaConceptos");
   if (loans.length) wb.definedNames.add(`Catalogos!$C$2:$C$${loans.length + 1}`, "ListaPrestamos");
   for (let row = 2; row <= 501; row++) {
-    ws.getCell(row, 1).value = `IMP-${crypto.randomUUID()}`;
     ws.getCell(row, 2).numFmt = "yyyy-mm-dd";
     ws.getCell(row, 6).numFmt = "#,##0.00";
     ws.getCell(row, 7).numFmt = "#,##0.00";
@@ -149,7 +149,7 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   const bytes = await wb.xlsx.writeBuffer();
   // ExcelJS returns a Uint8Array/Buffer; copy into a standard ArrayBuffer for Blob compatibility.
   const u8 = new Uint8Array(bytes);
-  filenameDownload(u8.slice().buffer, `nelcy_${kind}_layout_v1.xlsx`);
+  filenameDownload(u8.slice().buffer, `nelcy_${kind}_layout_v2.xlsx`);
 }
 
 async function stableId(fields: string[]): Promise<string> {
@@ -182,21 +182,23 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   const activeEntities = entities.filter((e)=>e.active);
   const categoriesOfKind = categories.filter((c)=>c.active && c.kind === kind);
   const existingIds = new Set(existing.map((m)=>m.id));
+  const existingById = new Map<string, Movement>(existing.map((m): [string, Movement] => [m.id, m]));
   const existingSignatures = new Set(existing.map(signature));
   const seenIds = new Set<string>();
   const seenSignatures = new Set<string>();
+  const occurrenceCount = new Map<string, number>();
   const rows: PreviewLine[] = [];
   let totalCents = 0;
   const reservedPayments = new Map<string,number>();
   for (let row = 2; row <= ws.rowCount; row++) {
     const values = Array.from({ length: BULK_HEADERS.length }, (_, col) => ws.getCell(row, col+1).value);
-    // El layout llena la referencia de todas las filas, incluso las vacías.
-    if (values.slice(1).every((v) => v === null || v === undefined || String(v).trim() === "")) continue;
+    // El layout no contiene identificadores precargados. Ignorar filas totalmente vacías.
+    if (values.every((v) => v === null || v === undefined || String(v).trim() === "")) continue;
     const errors: string[] = [];
     const warnings: string[] = [];
     if (values.some(isFormula)) errors.push("No se admiten fórmulas en los campos de captura; pega valores.");
-    const ref = trimValue(values[0]);
-    if (!ref || ref.length > 100) errors.push("Referencia externa obligatoria (máx. 100 caracteres).");
+    const userFolio = trimValue(values[0]);
+    if (userFolio.length > 100) errors.push("El folio del usuario supera 100 caracteres.");
     const date = dateValue(values[1]);
     if (!date) errors.push("Fecha inválida: usa AAAA-MM-DD o una fecha de Excel.");
     const fromText = trimValue(values[2]);
@@ -240,13 +242,25 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       toEntityId: requiresTo ? to?.id ?? null : null,
       categoryId: ordinary ? category?.id ?? null : null,
       loanId: kind === "loan_repayment" ? loan?.id ?? null : null,
-      amountCents, taxCents, counterparty, description, externalRef: ref,
+      amountCents, taxCents, counterparty, description,
+      ...(userFolio ? { userFolio } : {}),
     };
-    const docId = await stableId([orgId, kind, movement.fromEntityId ?? "", movement.toEntityId ?? "", ref]);
-    if (seenIds.has(docId)) errors.push("Referencia externa duplicada dentro del Excel para estas entidades.");
-    seenIds.add(docId);
-    if (existingIds.has(docId)) errors.push("Movimiento ya importado con esta referencia (no se modificará).");
     const rowSignature = signature(movement);
+    const occurrence = (occurrenceCount.get(rowSignature) ?? 0) + 1;
+    occurrenceCount.set(rowSignature, occurrence);
+    // Con folio la identidad es el folio por tipo y entidades; sin folio se basa en
+    // el contenido normalizado y la ocurrencia (idempotente al reimportar el mismo archivo).
+    const docId = userFolio
+      ? await stableId([orgId, "folio", kind, movement.fromEntityId ?? "", movement.toEntityId ?? "", userFolio.normalize("NFKC").trim().toLocaleLowerCase("es")])
+      : await stableId([orgId, "sin-folio", rowSignature, String(occurrence)]);
+    if (seenIds.has(docId)) errors.push("Folio duplicado dentro del archivo para este tipo y entidades.");
+    seenIds.add(docId);
+    if (existingIds.has(docId)) {
+      const previous = existingById.get(docId);
+      errors.push(previous && signature(previous) !== rowSignature
+        ? "Este folio ya existe con datos distintos. No se modificará: revísalo manualmente."
+        : "Movimiento ya importado; no se volverá a guardar.");
+    }
     if (existingSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con un movimiento existente: posible duplicado.");
     if (seenSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con otra fila del mismo Excel: revísala.");
     seenSignatures.add(rowSignature);
@@ -254,7 +268,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       totalCents += amountCents;
       if (kind === "loan_repayment" && loan) reservedPayments.set(loan.id, (reservedPayments.get(loan.id) ?? 0) + amountCents);
     }
-    rows.push({ row, reference: ref, date, entityText: fromText || toText, amountCents, docId,
+    rows.push({ row, userFolio, date, entityText: fromText || toText, amountCents, docId,
       data: errors.length ? null : movement, errors, warnings });
   }
   if (!rows.length) throw new Error("No hay movimientos para importar. Completa al menos una fila del Excel.");

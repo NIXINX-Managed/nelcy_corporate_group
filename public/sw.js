@@ -1,33 +1,39 @@
-/* PWA instalable: caché SOLO para iconos y archivos estáticos.
- * Deliberadamente NO guarda páginas, tokens, Firestore ni datos financieros.
- * Las operaciones requieren conexión a internet.
+/* Nelcy Corporate Group PWA
+ * El Service Worker solo guarda iconos de la PWA.
+ * Nunca cachea scripts de Next.js, páginas, formularios o información financiera.
+ * Esto evita ejecutar una versión antigua del importador de Excel.
  */
-const STATIC_CACHE = "ncg-static-v1";
-const INITIAL_FILES = ["/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE_NAME = "ncg-static-v2";
+const ICONS = ["/icons/icon-192.png", "/icons/icon-512.png"];
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(INITIAL_FILES)));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ICONS)));
   self.skipWaiting();
 });
+
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(
-    keys.filter((key) => key !== STATIC_CACHE).map((key) => caches.delete(key))
-  )));
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((name) => name.startsWith("ncg-static-") && name !== CACHE_NAME)
+        .map((name) => caches.delete(name)))
+    )
+  );
   self.clients.claim();
 });
+
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
-  const isSafeStatic = url.pathname.startsWith("/icons/") ||
-    url.pathname.startsWith("/_next/static/");
-  if (!isSafeStatic) return;
-  event.respondWith(caches.match(event.request).then((cached) => {
-    if (cached) return cached;
-    return fetch(event.request).then((response) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || !url.pathname.startsWith("/icons/")) return;
+
+  event.respondWith(
+    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
       if (response.ok && response.type === "basic") {
-        const clone = response.clone();
-        caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, clone));
+        const copy = response.clone();
+        void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       }
       return response;
-    });
-  }));
+    }))
+  );
 });
