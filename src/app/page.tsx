@@ -69,7 +69,7 @@ export default function Home() {
   const [categoryId, setCategoryId] = useState("");
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
-  const [tax, setTax] = useState("0");
+  const [netAmount, setNetAmount] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [description, setDescription] = useState("");
@@ -235,11 +235,11 @@ export default function Home() {
     event.preventDefault();
     if (!user || !canWrite) return;
     const amountCents = dollarsToCents(amount);
-    const taxCents = isOrdinary ? dollarsToCents(tax) : 0;
+    const netCents = isOrdinary ? dollarsToCents(netAmount) : amountCents;
+    const taxCents = isOrdinary ? amountCents - netCents : 0;
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 ||
-      !Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents ||
-      (isOrdinary && taxCents === amountCents)) {
-      setNotice("Importe inválido. El impuesto debe ser menor que el importe total (no igual a él).");
+      !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents) {
+      setNotice("Revisa los importes: el valor antes de impuestos debe ser positivo y el total debe ser igual o mayor.");
       return;
     }
     const actualFrom = needsFrom ? fromEntityId : null;
@@ -281,7 +281,7 @@ export default function Home() {
         ...(userFolio.trim() ? { userFolio: userFolio.trim() } : {}),
         amountCents, taxCents, createdAt: serverTimestamp(), createdBy: user.uid,
       });
-      setAmount(""); setTax("0"); setCounterparty(""); setCustomerId(""); setDescription(""); setUserFolio(""); setLoanId("");
+      setAmount(""); setNetAmount(""); setCounterparty(""); setCustomerId(""); setDescription(""); setUserFolio(""); setLoanId("");
       setNotice("Movimiento guardado en Firestore.");
     } catch (error) { setNotice(messageFromError(error)); }
     finally { setBusy(false); }
@@ -313,7 +313,7 @@ export default function Home() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><div className="brand-icon">N</div>
-        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.4</span></div>
+        <div><strong>Nelcy Corporate Group</strong><span>Financial Control · v0.7</span></div>
       </div>
       <div className="account"><span>{user?.email}</span><span className="role-tag">{role}</span>
         <button className="button-secondary" onClick={() => signOut(firebaseServices().auth)}>Salir</button></div>
@@ -455,8 +455,17 @@ export default function Home() {
               </select>
               {incomeCompany && !incomeCustomers.length && <span className="field-hint">No hay clientes activos para esta empresa. Regístralos en Clientes.</span>}
             </label>}
-            <label>Importe total (CAD)<input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1000.00" inputMode="decimal" /></label>
-            {isOrdinary && <label>Impuestos incluidos (CAD)<input required value={tax} onChange={(e) => setTax(e.target.value)} placeholder="0.00" inputMode="decimal" /></label>}
+            {isOrdinary && <label>{entryKind === "income" ? "Valor de venta antes de impuestos (CAD)" : entryKind === "cost" ? "Costo antes de impuestos (CAD)" : "Gasto antes de impuestos (CAD)"}
+              <input required value={netAmount} onChange={(e) => setNetAmount(e.target.value)} placeholder="1000.00" inputMode="decimal" />
+            </label>}
+            <label>{entryKind === "income" ? "Total cobrado (CAD)" : entryKind === "cost" || entryKind === "expense" ? "Total pagado (CAD)" : "Importe total (CAD)"}
+              <input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1130.00" inputMode="decimal" />
+            </label>
+            {isOrdinary && <div className="calculated-tax" role="status">
+              <span>Impuestos calculados = total − valor antes de impuestos</span>
+              <strong>{Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(netAmount)) && dollarsToCents(amount) >= dollarsToCents(netAmount) && dollarsToCents(netAmount) > 0
+                ? centsToMoney(dollarsToCents(amount) - dollarsToCents(netAmount)) : "—"}</strong>
+            </div>}
             <label>Folio del usuario (opcional)<input value={userFolio} maxLength={100} onChange={(e) => setUserFolio(e.target.value)} placeholder="Factura, recibo o folio interno" /></label>
             <label>{entryKind === "income" ? "Contraparte libre (si no hay cliente vinculado)" : "Contraparte / proveedor"}
               <input value={customerId && entryKind === "income" ? customers.find((c) => c.id === customerId)?.name ?? "" : counterparty}

@@ -98,7 +98,7 @@ export function BulkImport({ entities, categories, customers, movements, uid, se
 
   return <div className="bulk-stack">
     <section className="panel"><div className="panel-title"><h2>1. Descargar layout de Excel</h2><span>Compatible con Microsoft Excel (.xlsx)</span></div>
-      <p>Para ingresos, costos y gastos, selecciona una empresa: el Excel solo tendrá fecha, concepto, importe, impuestos y los campos aplicables. En ingresos podrás seleccionar clientes de esa empresa. Las referencias se generan al importar.</p>
+      <p>Para ingresos, costos y gastos, selecciona una empresa: el Excel tendrá valor antes de impuestos y total. La aplicación calcula los impuestos automáticamente. En ingresos podrás elegir clientes de esa empresa. Descarga un layout nuevo v5.</p>
       <div className="bulk-toolbar">
         <label className="bulk-label">Tipo de operación
           <select value={kind} disabled={parsing || uploading} onChange={(e)=>setKind(e.target.value as MovementKind)}>
@@ -136,13 +136,15 @@ export function BulkImport({ entities, categories, customers, movements, uid, se
         <div><strong>{counts.invalid}</strong><span>Con errores</span></div>
         <div><strong>{counts.warnings}</strong><span>Posibles duplicados</span></div>
       </div>
-      <p className="small-note">Los errores no se guardan. Los posibles duplicados requieren confirmación. Si dos operaciones realmente idénticas deben registrarse por separado, asigna folios diferentes en Excel.</p>
+      <p className="small-note">Los errores no se guardan. Los posibles duplicados requieren confirmación. Revisa las operaciones idénticas: el sistema las diferencia por su posición entre las ocurrencias del mismo archivo.</p>
       {counts.warnings > 0 && <label className="bulk-confirm"><input type="checkbox" checked={allowSimilar} disabled={uploading}
         onChange={(e)=>setAllowSimilar(e.target.checked)}/> Confirmo que las filas marcadas como posibles duplicados corresponden a operaciones distintas y deseo incluirlas.</label>}
       <div className="table-wrap"><table className="bulk-table"><thead><tr>
-        <th>Fila</th><th>Folio usuario</th><th>Fecha</th><th>Empresa / entidad</th><th>Cliente</th><th>Monto</th><th>Resultado</th>
+        <th>Fila</th><th>Folio usuario</th><th>Fecha</th><th>Empresa / entidad</th><th>Cliente</th><th>Valor antes de impuestos</th><th>Impuestos calculados</th><th>Total</th><th>Resultado</th>
       </tr></thead><tbody>{preview.slice(0, 250).map((r)=><tr key={r.row}>
         <td>{r.row}</td><td>{r.userFolio || "—"}</td><td>{r.date || "—"}</td><td>{r.entityText || "—"}</td><td>{r.customerText || "—"}</td>
+        <td>{Number.isSafeInteger(r.netCents) && r.netCents > 0 ? centsToMoney(r.netCents) : "—"}</td>
+        <td>{Number.isSafeInteger(r.taxCents) && r.taxCents >= 0 ? centsToMoney(r.taxCents) : "—"}</td>
         <td>{Number.isSafeInteger(r.amountCents) ? centsToMoney(r.amountCents) : "—"}</td>
         <td>{r.errors.length ? <span className="bulk-error">{r.errors.join(" · ")}</span> :
           r.warnings.length ? <span className="bulk-warn">{r.warnings.join(" · ")}</span> :

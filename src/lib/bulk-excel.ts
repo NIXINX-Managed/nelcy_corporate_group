@@ -1,10 +1,17 @@
 import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
 import { dollarsToCents, movementLabels } from "@/lib/finance";
 
-export const BULK_VERSION = "NELCY-LAYOUT-4";
+export const BULK_VERSION = "NELCY-LAYOUT-5";
+const PREVIOUS_SCOPED_VERSION = "NELCY-LAYOUT-4";
 const PREVIOUS_BULK_VERSION = "NELCY-LAYOUT-3";
 const OLD_BULK_VERSION = "NELCY-LAYOUT-2";
-const SCOPED_HEADERS = ["Fecha (AAAA-MM-DD)", "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)", "Cliente (opcional)", "Contraparte / proveedor", "Observaciones"] as const;
+const scopedHeaders = (kind: MovementKind, version: string): string[] => {
+  const prefix = ["Fecha (AAAA-MM-DD)", "Concepto"];
+  if (version === PREVIOUS_SCOPED_VERSION) return [...prefix, "Importe total (CAD)", "Impuestos incluidos (CAD)", ...(kind === "income" ? ["Cliente (opcional)"] : []), "Contraparte / proveedor", "Observaciones"];
+  const net = kind === "income" ? "Valor de venta antes de impuestos (CAD)" : kind === "cost" ? "Costo antes de impuestos (CAD)" : "Gasto antes de impuestos (CAD)";
+  const total = kind === "income" ? "Total cobrado (CAD)" : "Total pagado (CAD)";
+  return [...prefix, net, total, ...(kind === "income" ? ["Cliente (opcional)"] : []), "Contraparte / proveedor", "Observaciones"];
+};
 export const BULK_HEADERS = [
   "Folio del usuario (opcional)", "Fecha (AAAA-MM-DD)", "Entidad origen", "Entidad destino",
   "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
@@ -41,6 +48,8 @@ export type PreviewLine = {
   entityText: string;
   customerText: string;
   amountCents: number;
+  netCents: number;
+  taxCents: number;
   docId: string;
   data: ImportableMovement | null;
   errors: string[];
@@ -213,7 +222,8 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
     ["ID empresa del layout", company.id], ["Empresa", company.name],
     ["Uso", "Esta plantilla registra movimientos únicamente en la empresa indicada. Para otra empresa descarga otra plantilla."],
     ["Fecha", "AAAA-MM-DD o fecha real de Excel."],
-    ["Impuestos", "Importe incluido en el total; no igual ni superior al importe."],
+    ["Importes", "Captura el valor antes de impuestos y el total cobrado/pagado. Impuestos = total - valor antes de impuestos."],
+    ["Operaciones sin impuestos", "Si no se aplicaron impuestos, escribe el mismo importe en ambas columnas."],
     ["Cliente", "Solo en ingresos. Selecciona entre los clientes activos de esta compañía. Puede quedar vacío."],
     ["Identificador", "La aplicación asigna una referencia interna al importar; no necesitas folios manuales."],
     ["Duplicados", "Se detectan por contenido y ocurrencia. Dos filas iguales representan dos registros distintos dentro del mismo Excel."],
@@ -232,7 +242,7 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
   ]);
   catalog.getRow(1).font = {bold:true,color:{argb:"FFFFFFFF"}};
   catalog.getRow(1).fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF244C7D"}};
-  const headers = kind === "income" ? [...SCOPED_HEADERS] : SCOPED_HEADERS.filter((v)=>v!=="Cliente (opcional)");
+  const headers = scopedHeaders(kind, BULK_VERSION);
   const ws = wb.addWorksheet("Movimientos", {views:[{state:"frozen",ySplit:1}]});
   const widths = kind === "income" ? [22,54,24,28,80,50,65] : [22,54,24,28,50,65];
   ws.columns = headers.map((header,i)=>({header,width:widths[i]}));
@@ -251,7 +261,7 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
   }
   const data = await wb.xlsx.writeBuffer();
   const safeName = company.name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").slice(0,35).replace(/^-|-$/g,"") || "empresa";
-  filenameDownload(new Uint8Array(data).slice().buffer,`nelcy_${kind}_${safeName}_layout_v4.xlsx`);
+  filenameDownload(new Uint8Array(data).slice().buffer,`nelcy_${kind}_${safeName}_layout_v5.xlsx`);
 }
 
 async function stableId(fields: string[]): Promise<string> {
@@ -279,15 +289,15 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   const info = wb.getWorksheet("Instrucciones");
   const ws = wb.getWorksheet("Movimientos");
   const layoutVersion = info ? trimValue(info.getCell("B1").value) : "";
-  if (!ws || !info || ![BULK_VERSION, PREVIOUS_BULK_VERSION, OLD_BULK_VERSION].includes(layoutVersion)) {
+  if (!ws || !info || ![BULK_VERSION, PREVIOUS_SCOPED_VERSION, PREVIOUS_BULK_VERSION, OLD_BULK_VERSION].includes(layoutVersion)) {
     throw new Error("Formato no reconocido. Descarga el layout de Nelcy y coloca allí tus registros.");
   }
   const kind = trimValue(info.getCell("B2").value) as MovementKind;
   if (!ALL_KINDS.includes(kind)) throw new Error("El tipo de movimiento del layout no es válido.");
-  const scoped = layoutVersion === BULK_VERSION;
+  const scoped = layoutVersion === BULK_VERSION || layoutVersion === PREVIOUS_SCOPED_VERSION;
   const scopedCompany = scoped ? entities.find((e)=>e.id === trimValue(info.getCell("B3").value) && e.active && e.type === "company") : undefined;
   if (scoped && (!scopedCompany || !ordinaryKinds.includes(kind))) throw new Error("La empresa del layout no es válida o ya no está activa. Descarga una plantilla nueva.");
-  const headers = scoped ? (kind === "income" ? [...SCOPED_HEADERS] : SCOPED_HEADERS.filter((h)=>h !== "Cliente (opcional)")) :
+  const headers = scoped ? scopedHeaders(kind, layoutVersion) :
     layoutVersion === OLD_BULK_VERSION ? [...OLD_BULK_HEADERS] : [...BULK_HEADERS];
   for (let i = 0; i < headers.length; i++) {
     if (trimValue(ws.getCell(1, i+1).value) !== headers[i]) throw new Error(`Encabezado incorrecto en columna ${i+1}. Usa un layout sin modificar.`);
@@ -331,8 +341,12 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     const to = pickByName(toText, activeEntities);
     const categoryText = trimValue(values[4]);
     const category = pickByName(categoryText, categoriesOfKind);
-    const amountCents = moneyValue(values[5]);
-    const taxCents = trimValue(values[6]) === "" ? 0 : moneyValue(values[6]);
+    // En v5 se capturan subtotal/neto y total; las versiones anteriores
+    // conservan el esquema de total e impuestos explícitos para no reinterpretar datos.
+    const modernAmounts = layoutVersion === BULK_VERSION;
+    const netInputCents = modernAmounts ? moneyValue(values[5]) : NaN;
+    const amountCents = modernAmounts ? moneyValue(values[6]) : moneyValue(values[5]);
+    const taxCents = modernAmounts ? amountCents - netInputCents : trimValue(values[6]) === "" ? 0 : moneyValue(values[6]);
     const oldLayout = layoutVersion === OLD_BULK_VERSION;
     const customerText = oldLayout ? "" : trimValue(values[7]);
     const inputCounterparty = trimValue(values[oldLayout ? 7 : 8]);
@@ -347,8 +361,11 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       errors.push("La contraparte no coincide con el cliente elegido. Déjala vacía o escribe el nombre del cliente.");
     }
     const loan = loanFromText(loanText, existing);
-    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000) errors.push("Importe inválido: utiliza un número positivo con máximo dos decimales.");
-    if (!Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents || (ordinaryKinds.includes(kind) && amountCents > 0 && taxCents === amountCents)) errors.push("Impuesto inválido: debe ser menor al importe total.");
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000) errors.push("Total inválido: utiliza un número positivo con máximo dos decimales.");
+    if (modernAmounts && (!Number.isSafeInteger(netInputCents) || netInputCents <= 0 || netInputCents > amountCents))
+      errors.push("Valor antes de impuestos inválido: debe ser positivo y no superar el total.");
+    if (!Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents || (ordinaryKinds.includes(kind) && amountCents > 0 && taxCents === amountCents))
+      errors.push(modernAmounts ? "Impuestos calculados inválidos: comprueba valor antes de impuestos y total." : "Impuesto inválido: debe ser menor al importe total. En el nuevo layout v5 ya no se captura manualmente.");
     if (counterparty.length > 160 || description.length > 500) errors.push("Contraparte u observaciones exceden el límite permitido.");
     const ordinary = ordinaryKinds.includes(kind);
     const requiresFrom = kind !== "income";
@@ -403,7 +420,8 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       totalCents += amountCents;
       if (kind === "loan_repayment" && loan) reservedPayments.set(loan.id, (reservedPayments.get(loan.id) ?? 0) + amountCents);
     }
-    rows.push({ row, userFolio, date, entityText: fromText || toText, customerText: selectedCustomer?.name ?? customerText, amountCents, docId,
+    rows.push({ row, userFolio, date, entityText: fromText || toText, customerText: selectedCustomer?.name ?? customerText,
+      amountCents, netCents: amountCents - taxCents, taxCents, docId,
       data: errors.length ? null : movement, errors, warnings });
   }
   if (!rows.length) throw new Error("No hay movimientos para importar. Completa al menos una fila del Excel.");

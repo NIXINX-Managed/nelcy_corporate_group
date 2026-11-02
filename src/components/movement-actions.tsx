@@ -21,7 +21,7 @@ export function MovementActions({ movement, entities, categories, customers, uid
   const [categoryId, setCategoryId] = useState(movement.categoryId ?? "");
   const [customerId, setCustomerId] = useState(movement.customerId ?? "");
   const [amount, setAmount] = useState((movement.amountCents / 100).toFixed(2));
-  const [tax, setTax] = useState((movement.taxCents / 100).toFixed(2));
+  const [net, setNet] = useState(((movement.amountCents - movement.taxCents) / 100).toFixed(2));
   const [counterparty, setCounterparty] = useState(movement.counterparty);
   const [description, setDescription] = useState(movement.description);
   const [reason, setReason] = useState("");
@@ -42,7 +42,7 @@ export function MovementActions({ movement, entities, categories, customers, uid
     setCategoryId(movement.categoryId ?? "");
     setCustomerId(movement.customerId ?? "");
     setAmount((movement.amountCents / 100).toFixed(2));
-    setTax((movement.taxCents / 100).toFixed(2));
+    setNet(((movement.amountCents - movement.taxCents) / 100).toFixed(2));
     setCounterparty(movement.counterparty);
     setDescription(movement.description);
     setReason("");
@@ -58,9 +58,10 @@ export function MovementActions({ movement, entities, categories, customers, uid
     const cleanReason = reason.trim();
     if (cleanReason.length < 8 || cleanReason.length > 400) { setNotice("Indica un motivo de al menos 8 caracteres (máximo 400)."); return; }
     const amountCents = dollarsToCents(amount);
-    const taxCents = ordinary ? dollarsToCents(tax) : 0;
-    if (action === "edit" && (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 || !Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents >= amountCents)) {
-      setNotice("El importe debe ser positivo y el impuesto menor al importe total."); return;
+    const netCents = ordinary ? dollarsToCents(net) : amountCents;
+    const taxCents = ordinary ? amountCents - netCents : 0;
+    if (action === "edit" && (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 || !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents)) {
+      setNotice("Revisa los importes: el valor antes de impuestos debe ser positivo y el total igual o mayor."); return;
     }
     if (action === "edit") {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T12:00:00Z`))) { setNotice("Fecha inválida."); return; }
@@ -101,11 +102,16 @@ export function MovementActions({ movement, entities, categories, customers, uid
         });
         transaction.set(movementRef, after);
       });
-      setNotice(action === "void" ? "Movimiento anulado y auditado." : "Movimiento actualizado y auditado.");
-      const auditSnap = await getDocs(auditCollection);
-      setAudit(auditSnap.docs.map((d) => d.data() as AuditRow).sort((a,b)=>b.revision-a.revision));
-      if (action === "edit") setShow(false);
-    } catch (error) { setNotice(textError(error)); }
+      setNotice(action === "void" ? "Movimiento anulado y auditado correctamente en Firestore." : "Corrección guardada y auditada correctamente en Firestore.");
+      // Una consulta posterior de auditoría no debe hacer parecer que el guardado falló.
+      try {
+        const auditSnap = await getDocs(auditCollection);
+        setAudit(auditSnap.docs.map((d) => d.data() as AuditRow).sort((a,b)=>b.revision-a.revision));
+      } catch {
+        setNotice("La corrección o anulación se guardó, pero no pudo actualizarse la bitácora en pantalla. Cierra y vuelve a abrir el movimiento.");
+      }
+      // Mantener el modal abierto: confirmación visible incluso con datos actualizados por Firestore.
+    } catch (error) { setNotice(`No se guardó la ${action === "edit" ? "corrección" : "anulación"}: ${textError(error)}. Verifica que las reglas v0.6+ de Firestore estén publicadas.`); }
     finally { setBusy(false); }
   }
 
@@ -124,8 +130,13 @@ export function MovementActions({ movement, entities, categories, customers, uid
             {!outgoing && <label>Entidad destino<select value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
             {ordinary && <label>Concepto<select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}>{categories.filter((c)=>c.kind===kind).map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
             {income && <label>Cliente<select value={customerId} onChange={(e)=>setCustomerId(e.target.value)}><option value="">Sin cliente del catálogo</option>{companyCustomers.map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
-            <label>Importe total CAD<input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></label>
-            {ordinary && <label>Impuestos incluidos CAD<input inputMode="decimal" value={tax} onChange={(e)=>setTax(e.target.value)} /></label>}
+            {ordinary && <label>{income ? "Valor de venta antes de impuestos CAD" : kind === "cost" ? "Costo antes de impuestos CAD" : "Gasto antes de impuestos CAD"}
+              <input inputMode="decimal" value={net} onChange={(e)=>setNet(e.target.value)} /></label>}
+            <label>{income ? "Total cobrado CAD" : outgoing ? "Total pagado CAD" : "Importe total CAD"}
+              <input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></label>
+            {ordinary && <div className="calculated-tax" role="status"><span>Impuestos calculados automáticamente</span>
+              <strong>{Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(net)) && dollarsToCents(amount) >= dollarsToCents(net) && dollarsToCents(net) > 0
+                ? centsToMoney(dollarsToCents(amount) - dollarsToCents(net)) : "—"}</strong></div>}
             <label>Contraparte<input maxLength={160} disabled={income && !!customerId} value={income && customerId ? companyCustomers.find((c)=>c.id===customerId)?.name ?? "" : counterparty} onChange={(e)=>setCounterparty(e.target.value)} /></label>
             <label className="wide">Observaciones<input maxLength={500} value={description} onChange={(e)=>setDescription(e.target.value)} /></label>
           </div>
