@@ -7,12 +7,13 @@ import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/f
 import { centsToMoney, movementLabels } from "@/lib/finance";
 import { ALL_KINDS, downloadLayout, MAX_IMPORT_ROWS, parseBulkFile, type PreviewLine } from "@/lib/bulk-excel";
 
-type Props = { entities: Entity[]; categories: Category[]; customers: Customer[]; movements: Movement[]; uid: string };
+type Props = { entities: Entity[]; categories: Category[]; customers: Customer[]; movements: Movement[]; uid: string; selectedEntity: string };
 type ImportResult = { saved: number; skipped: number; failed: number };
 const errorLabel = (error: unknown) => error instanceof Error ? error.message : "Error desconocido";
 
-export function BulkImport({ entities, categories, customers, movements, uid }: Props) {
+export function BulkImport({ entities, categories, customers, movements, uid, selectedEntity }: Props) {
   const [kind, setKind] = useState<MovementKind>("income");
+  const [layoutCompanyId, setLayoutCompanyId] = useState(entities.some((e)=>e.id === selectedEntity && e.type === "company") ? selectedEntity : "");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<PreviewLine[]>([]);
   const [previewKind, setPreviewKind] = useState<MovementKind | null>(null);
@@ -39,7 +40,7 @@ export function BulkImport({ entities, categories, customers, movements, uid }: 
   async function download() {
     setStatus("");
     setParsing(true);
-    try { await downloadLayout(kind, entities, categories, customers, movements); }
+    try { await downloadLayout(kind, entities, categories, customers, movements, layoutCompanyId); }
     catch (err) { setStatus(`No se pudo generar el layout: ${errorLabel(err)}`); }
     finally { setParsing(false); }
   }
@@ -97,14 +98,20 @@ export function BulkImport({ entities, categories, customers, movements, uid }: 
 
   return <div className="bulk-stack">
     <section className="panel"><div className="panel-title"><h2>1. Descargar layout de Excel</h2><span>Compatible con Microsoft Excel (.xlsx)</span></div>
-      <p>Selecciona el tipo de movimiento. La plantilla de ingresos incluye un desplegable de clientes activos vinculados a cada compañía, además de entidades, conceptos y folio opcional. La referencia interna se genera al importar.</p>
+      <p>Para ingresos, costos y gastos, selecciona una empresa: el Excel solo tendrá fecha, concepto, importe, impuestos y los campos aplicables. En ingresos podrás seleccionar clientes de esa empresa. Las referencias se generan al importar.</p>
       <div className="bulk-toolbar">
         <label className="bulk-label">Tipo de operación
           <select value={kind} disabled={parsing || uploading} onChange={(e)=>setKind(e.target.value as MovementKind)}>
             {ALL_KINDS.map((id)=><option key={id} value={id}>{movementLabels[id]}</option>)}
           </select>
         </label>
-        <button type="button" className="button-primary" disabled={parsing || uploading} onClick={download}>
+        {(["income", "cost", "expense"] as MovementKind[]).includes(kind) && <label className="bulk-label">Empresa del layout
+          <select value={layoutCompanyId} onChange={(e)=>setLayoutCompanyId(e.target.value)}>
+            <option value="">Seleccionar empresa</option>
+            {entities.filter((e)=>e.type === "company" && e.active).sort((a,b)=>a.name.localeCompare(b.name)).map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </label>}
+        <button type="button" className="button-primary" disabled={parsing || uploading || (["income","cost","expense"] as MovementKind[]).includes(kind) && !layoutCompanyId} onClick={download}>
           {parsing ? "Preparando…" : "Descargar plantilla .xlsx"}
         </button>
       </div>

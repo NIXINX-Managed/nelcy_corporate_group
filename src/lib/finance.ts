@@ -25,6 +25,9 @@ export interface Customer {
   email: string;
   phone: string;
   notes: string;
+  contactName?: string;
+  address?: string;
+  taxId?: string;
   active: boolean;
 }
 export interface Movement {
@@ -40,6 +43,10 @@ export interface Movement {
   amountCents: number;
   taxCents: number;
   createdBy: string;
+  revision?: number;
+  voided?: boolean;
+  voidReason?: string;
+  updatedBy?: string;
   externalRef?: string;
   userFolio?: string;
   customerId?: string;
@@ -70,6 +77,7 @@ export function dollarsToCents(raw: string): number {
 }
 
 export function selectedCashDelta(m: Movement, selectedIds: Set<string>): number {
+  if (m.voided) return 0;
   const outgoing = m.fromEntityId && selectedIds.has(m.fromEntityId) ? m.amountCents : 0;
   const incoming = m.toEntityId && selectedIds.has(m.toEntityId) ? m.amountCents : 0;
   return incoming - outgoing;
@@ -79,6 +87,7 @@ export function selectedCashDelta(m: Movement, selectedIds: Set<string>): number
 export function profitability(movements: Movement[], selected: Set<string>) {
   const totals = { income: 0, cost: 0, expense: 0 };
   for (const m of movements) {
+    if (m.voided) continue;
     if (m.kind === "income" && m.toEntityId && selected.has(m.toEntityId)) {
       totals.income += m.amountCents - m.taxCents;
     } else if (m.kind === "cost" && m.fromEntityId && selected.has(m.fromEntityId)) {

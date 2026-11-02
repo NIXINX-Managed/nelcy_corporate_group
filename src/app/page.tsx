@@ -19,6 +19,7 @@ import { firebaseServices, isFirebaseConfigured, organizationId } from "@/lib/fi
 import { BulkImport } from "@/components/bulk-import";
 import { CatalogImport } from "@/components/catalog-import";
 import { CustomerCatalog } from "@/components/customer-catalog";
+import { MovementActions } from "@/components/movement-actions";
 
 type Tab = "dashboard" | "movements" | "entities" | "categories" | "customers";
 type Status = "loading" | "login" | "unauthorized" | "ready" | "config-error";
@@ -139,7 +140,7 @@ export default function Home() {
         [selectedEntity]
   ), [selectedEntity, entities]);
   const filteredMovements = useMemo(() => movements
-    .filter((m) => m.date.startsWith(`${year}-`) && (
+    .filter((m) => !m.voided && m.date.startsWith(`${year}-`) && (
       (m.fromEntityId !== null && selectedIds.has(m.fromEntityId)) ||
       (m.toEntityId !== null && selectedIds.has(m.toEntityId))
     ))
@@ -169,10 +170,10 @@ export default function Home() {
     }
     return [...result.values()].sort((a, b) => a.kind.localeCompare(b.kind) || b.total - a.total);
   }, [filteredMovements, selectedIds]);
-  const loans = useMemo(() => movements.filter((m) => m.kind === "loan"), [movements]);
+  const loans = useMemo(() => movements.filter((m) => m.kind === "loan" && !m.voided), [movements]);
   const loanBalances = useMemo(() => loans.map((loan) => ({
     ...loan,
-    outstanding: loan.amountCents - movements.filter((m) => m.kind === "loan_repayment" && m.loanId === loan.id)
+    outstanding: loan.amountCents - movements.filter((m) => m.kind === "loan_repayment" && !m.voided && m.loanId === loan.id)
       .reduce((sum, m) => sum + m.amountCents, 0),
   })), [loans, movements]);
   const viewLoanBalances = loans.filter((loan) =>
@@ -180,7 +181,7 @@ export default function Home() {
     ((loan.fromEntityId && selectedIds.has(loan.fromEntityId)) ||
       (loan.toEntityId && selectedIds.has(loan.toEntityId))))
     .map((loan) => ({ ...loan, outstanding: loan.amountCents - movements.filter((m) =>
-      m.kind === "loan_repayment" && m.loanId === loan.id && m.date <= `${year}-12-31`)
+      m.kind === "loan_repayment" && !m.voided && m.loanId === loan.id && m.date <= `${year}-12-31`)
       .reduce((sum, m) => sum + m.amountCents, 0) }));
   const filteredHistory = useMemo(() => movements.filter((m) =>
     m.date.startsWith(`${year}-`) &&
@@ -236,8 +237,9 @@ export default function Home() {
     const amountCents = dollarsToCents(amount);
     const taxCents = isOrdinary ? dollarsToCents(tax) : 0;
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 ||
-      !Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents) {
-      setNotice("Importe inválido. El impuesto debe estar incluido en el monto y no superarlo.");
+      !Number.isSafeInteger(taxCents) || taxCents < 0 || taxCents > amountCents ||
+      (isOrdinary && taxCents === amountCents)) {
+      setNotice("Importe inválido. El impuesto debe ser menor que el importe total (no igual a él).");
       return;
     }
     const actualFrom = needsFrom ? fromEntityId : null;
@@ -429,8 +431,8 @@ export default function Home() {
           <button className={movementMode === "single" ? "active" : ""} type="button" onClick={() => setMovementMode("single")}>Captura individual</button>
           <button className={movementMode === "bulk" ? "active" : ""} type="button" onClick={() => setMovementMode("bulk")}>Importación masiva Excel</button>
         </div>}
-        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} uid={user.uid} />}
-        {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Los movimientos guardados no pueden editarse en v0.1</span></div>
+        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} uid={user.uid} selectedEntity={selectedEntity} />}
+        {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Las modificaciones y anulaciones conservan una bitácora. Préstamos y abonos requieren conciliación especial.</span></div>
           <div className="form-grid">
             <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); }}>
               {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
@@ -467,9 +469,9 @@ export default function Home() {
         </form>}
         <section className="panel"><div className="panel-title"><h2>Historial de movimientos</h2><span>{filteredHistory.length} en esta vista · {movements.length} globales</span></div>
           <p className="small-note">Historial filtrado por: <strong>{perspectiveLabel}</strong> · {year}. Cambia la vista en la barra superior. Las transferencias se muestran desde ambas entidades, sin duplicarlas en el consolidado.</p>
-          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Cliente</th><th>Contraparte</th><th>Importe</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Cliente</th><th>Contraparte</th><th>Importe</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>{filteredHistory.slice(0, 200).map((m) => <tr key={m.id}>
-              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.customerId ? (m.counterparty || customers.find((c) => c.id === m.customerId)?.name || "—") : "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td></tr>)}</tbody></table></div>
+              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.customerId ? (m.counterparty || customers.find((c) => c.id === m.customerId)?.name || "—") : "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td><td>{m.voided ? "Anulado" : "Vigente"}</td><td><MovementActions movement={m} entities={entities} categories={categories} customers={customers} uid={user?.uid ?? ""} canWrite={canWrite} /></td></tr>)}</tbody></table></div>
           {!filteredHistory.length && <p className="empty">No hay movimientos en la perspectiva y ejercicio seleccionados.</p>}
           {filteredHistory.length > 200 && <p className="small-note">Vista preliminar: se muestran los 200 movimientos más recientes.</p>}
         </section>

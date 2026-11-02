@@ -29,3 +29,13 @@ h1,h2,p{margin-top:0}h1{font-size:clamp(24px,3vw,30px);letter-spacing:-.035em;ma
 .customer-filters input,.customer-filters select{height:40px;border:1px solid #dbe3ed;background:#fff;border-radius:7px;padding:0 11px;max-width:100%;min-width:0}
 .customer-row-actions{display:flex;gap:4px}.field-hint{font-weight:400;color:#728099;font-size:11px}
 @media(max-width:550px){.customer-actions{align-items:stretch;flex-direction:column}.customer-actions .small-note{width:100%}.customer-filters label{min-width:100%}.customer-row-actions{flex-wrap:wrap}}
+
+/* V0.6 — Edición y bitácora de movimientos (sin borrado físico) */
+.movement-modal-backdrop{position:fixed;inset:0;z-index:120;background:rgba(10,26,49,.64);display:flex;align-items:center;justify-content:center;padding:16px}
+.movement-modal{width:min(950px,100%);max-height:94dvh;overflow:auto;margin:0;box-shadow:0 18px 60px #09172a52}
+.movement-modal h3{font-size:16px;margin:22px 0 9px}
+.movement-modal code{overflow-wrap:anywhere;white-space:normal}
+.movement-reason{display:flex;flex-direction:column;gap:7px;font-size:12px;color:#56687f;font-weight:650;margin-top:18px}
+.movement-reason textarea{border:1px solid #dbe3ed;border-radius:8px;min-height:70px;padding:10px;font:inherit;resize:vertical}
+.movement-dialog-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px;margin:18px 0}
+@media(max-width:550px){.movement-modal-backdrop{padding:7px;align-items:stretch}.movement-modal{max-height:100%;border-radius:9px;padding:13px}.movement-dialog-actions{flex-direction:column}.movement-dialog-actions button{width:100%}}

@@ -12,8 +12,8 @@ type Props = {
   uid: string;
   canWrite: boolean;
 };
-type CustomerForm = { name: string; code: string; email: string; phone: string; notes: string };
-const blankForm: CustomerForm = { name: "", code: "", email: "", phone: "", notes: "" };
+type CustomerForm = { name: string; code: string; email: string; phone: string; notes: string; contactName: string; address: string; taxId: string };
+const blankForm: CustomerForm = { name: "", code: "", email: "", phone: "", notes: "", contactName: "", address: "", taxId: "" };
 const normalized = (text: string) => text.normalize("NFKC").trim().toLocaleLowerCase("es");
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Ocurrió un error al guardar en Firestore.";
@@ -54,7 +54,7 @@ export function CustomerCatalog({ entities, customers, selectedEntity, uid, canW
   function edit(customer: Customer) {
     setCompanyId(customer.companyId);
     setEditingId(customer.id);
-    setForm({ name: customer.name, code: customer.code ?? "", email: customer.email ?? "", phone: customer.phone ?? "", notes: customer.notes ?? "" });
+    setForm({ name: customer.name, code: customer.code ?? "", email: customer.email ?? "", phone: customer.phone ?? "", notes: customer.notes ?? "", contactName: customer.contactName ?? "", address: customer.address ?? "", taxId: customer.taxId ?? "" });
     setNotice("");
   }
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -64,10 +64,10 @@ export function CustomerCatalog({ entities, customers, selectedEntity, uid, canW
     if (!company) { setNotice("Selecciona una compañía activa."); return; }
     const data: CustomerForm = {
       name: form.name.trim(), code: form.code.trim(), email: form.email.trim(),
-      phone: form.phone.trim(), notes: form.notes.trim(),
+      phone: form.phone.trim(), notes: form.notes.trim(), contactName: form.contactName.trim(), address: form.address.trim(), taxId: form.taxId.trim(),
     };
     if (!data.name || data.name.length > 160 || data.code.length > 50 || data.email.length > 160 ||
-      data.phone.length > 40 || data.notes.length > 400) {
+      data.phone.length > 40 || data.notes.length > 400 || data.contactName.length > 160 || data.address.length > 300 || data.taxId.length > 50) {
       setNotice("Revisa las longitudes del nombre y de los datos de contacto."); return;
     }
     if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
@@ -128,6 +128,15 @@ export function CustomerCatalog({ entities, customers, selectedEntity, uid, canW
           </label>
           <label>Código o folio de cliente (opcional)
             <input maxLength={50} value={form.code} onChange={(e) => updateForm("code", e.target.value)} placeholder="Ej. CLI-001" />
+          </label>
+          <label>Persona de contacto (opcional)
+            <input maxLength={160} value={form.contactName} onChange={(e) => updateForm("contactName", e.target.value)} placeholder="Nombre de contacto" />
+          </label>
+          <label>Dirección (opcional)
+            <input maxLength={300} value={form.address} onChange={(e) => updateForm("address", e.target.value)} placeholder="Dirección de facturación" />
+          </label>
+          <label>Identificación fiscal / GST-HST (opcional)
+            <input maxLength={50} value={form.taxId} onChange={(e) => updateForm("taxId", e.target.value)} placeholder="Número fiscal" />
           </label>
           <label>Correo (opcional)
             <input type="email" maxLength={160} value={form.email} onChange={(e) => updateForm("email", e.target.value)} placeholder="cliente@empresa.com" />
