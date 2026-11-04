@@ -45,7 +45,7 @@ function messageFromError(error: unknown) {
 
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<Status>("loading");
+  const [status, setStatus] = useState<Status>(() => isFirebaseConfigured() ? "loading" : "config-error");
   const [role, setRole] = useState<UserRole | null>(null);
   const [retry, setRetry] = useState(0);
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -76,18 +76,13 @@ export default function Home() {
   const [userFolio, setUserFolio] = useState("");
 
   useEffect(() => {
-    const today = dateToday();
-    setYear(today.slice(0, 4));
-    setEntryDate(today);
-  }, []);
-
-  useEffect(() => {
-    if (!isFirebaseConfigured()) {
-      setStatus("config-error");
-      return;
-    }
+    if (!isFirebaseConfigured()) return;
     const { auth } = firebaseServices();
     return onAuthStateChanged(auth, (current) => {
+      // Inicializar las fechas cuando Firebase confirma la sesión, no durante el prerender.
+      const today = dateToday();
+      setYear((previous) => previous || today.slice(0, 4));
+      setEntryDate((previous) => previous || today);
       setUser(current);
       setStatus(current ? "loading" : "login");
       if (!current) setRole(null);
@@ -301,7 +296,7 @@ export default function Home() {
           <p>Tu sesión está activa, pero todavía no tienes permisos en <strong>{organizationId}</strong>.</p>
           <div className="uid-box"><span>UID para activar tu acceso:</span><code>{user?.uid}</code>
             <button className="button-secondary" onClick={() => navigator.clipboard.writeText(user?.uid ?? "")}>Copiar UID</button></div>
-          <p className="small-note">Crea el documento <code>organizations/{organizationId}/members/UID</code> en Firestore con el campo <code>role = "admin"</code>. Después comprueba el acceso.</p>
+          <p className="small-note">Crea el documento <code>organizations/{organizationId}/members/UID</code> en Firestore con el campo <code>role = &quot;admin&quot;</code>. Después comprueba el acceso.</p>
           <button className="button-primary" onClick={() => { setStatus("loading"); setRetry((n) => n + 1); }}>Comprobar acceso</button>
           <button className="button-link" onClick={() => signOut(firebaseServices().auth)}>Cambiar cuenta</button>
         </>}
@@ -410,7 +405,7 @@ export default function Home() {
         <section className="section-heading"><div><p className="eyebrow">RELACIONES COMERCIALES</p>
           <h1>Clientes por compañía</h1><p>Registra y consulta los clientes de cada empresa, sin mezclarlos con el ámbito personal.</p>
         </div></section>
-        <CustomerCatalog entities={entities} customers={customers} selectedEntity={selectedEntity}
+        <CustomerCatalog key={selectedEntity} entities={entities} customers={customers} selectedEntity={selectedEntity}
           uid={user?.uid ?? ""} canWrite={canWrite} />
       </>}
 

@@ -60,8 +60,10 @@ function trimValue(raw: unknown): string {
   if (raw == null) return "";
   if (typeof raw === "string" || typeof raw === "number") return String(raw).trim();
   if (raw instanceof Date) {
-    const year = raw.getFullYear();
-    return `${year}-${String(raw.getMonth() + 1).padStart(2, "0")}-${String(raw.getDate()).padStart(2, "0")}`;
+    // ExcelJS entrega fechas de Excel como medianoche UTC. Leerlas usando
+    // getDate()/getMonth() en Ontario las convierte al día anterior.
+    const year = raw.getUTCFullYear();
+    return `${year}-${String(raw.getUTCMonth() + 1).padStart(2, "0")}-${String(raw.getUTCDate()).padStart(2, "0")}`;
   }
   if (typeof raw === "object" && "text" in raw && typeof raw.text === "string") return raw.text.trim();
   return "";

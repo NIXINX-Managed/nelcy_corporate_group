@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { firebaseServices, organizationId } from "@/lib/firebase";
 import type { Customer, Entity } from "@/lib/finance";
@@ -21,23 +21,17 @@ function errorMessage(error: unknown) {
 
 export function CustomerCatalog({ entities, customers, selectedEntity, uid, canWrite }: Props) {
   const companies = useMemo(() => entities.filter((e) => e.type === "company").sort((a,b) => a.name.localeCompare(b.name)), [entities]);
-  const [companyId, setCompanyId] = useState("");
-  const [filterCompany, setFilterCompany] = useState("all");
+  // Se monta de nuevo cuando cambia la perspectiva global (key en page.tsx).
+  // Así el filtro comienza en la empresa elegida sin sincronizar estado en un efecto.
+  const initialCompanyId = entities.some((e) => e.type === "company" && e.id === selectedEntity)
+    ? selectedEntity : "";
+  const [companyId, setCompanyId] = useState(initialCompanyId);
+  const [filterCompany, setFilterCompany] = useState(initialCompanyId || "all");
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<CustomerForm>(blankForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    const current = companies.find((e) => e.id === selectedEntity);
-    if (current) {
-      setFilterCompany(current.id);
-      setCompanyId(current.id);
-    } else {
-      setFilterCompany("all");
-    }
-  }, [selectedEntity, companies]);
 
   const filtered = useMemo(() => customers.filter((c) =>
     (filterCompany === "all" || c.companyId === filterCompany) &&

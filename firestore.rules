@@ -19,6 +19,14 @@ service cloud.firestore {
     function categoryDoc(orgId, categoryId) {
       return /databases/$(database)/documents/organizations/$(orgId)/categories/$(categoryId);
     }
+    function customerDoc(orgId, customerId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/customers/$(customerId);
+    }
+    function validCustomerForIncome(orgId, customerId, entityId) {
+      return customerId is string && exists(customerDoc(orgId, customerId)) &&
+        get(customerDoc(orgId, customerId)).data.active == true &&
+        get(customerDoc(orgId, customerId)).data.companyId == entityId;
+    }
     function movementDoc(orgId, movementId) {
       return /databases/$(database)/documents/organizations/$(orgId)/movements/$(movementId);
     }
@@ -55,11 +63,38 @@ service cloud.firestore {
         d.kind in ['income','cost','expense'] && d.active is bool &&
         d.createdBy == request.auth.uid && d.createdAt == request.time;
     }
-    function validMovement(orgId) {
+    function validCustomerFields(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 160 &&
+        d.code is string && d.code.size() <= 50 &&
+        d.email is string && d.email.size() <= 160 &&
+        d.phone is string && d.phone.size() <= 40 &&
+        d.notes is string && d.notes.size() <= 400 &&
+        (!d.keys().hasAny(['contactName']) || (d.contactName is string && d.contactName.size() <= 160)) &&
+        (!d.keys().hasAny(['address']) || (d.address is string && d.address.size() <= 300)) &&
+        (!d.keys().hasAny(['taxId']) || (d.taxId is string && d.taxId.size() <= 50)) &&
+        d.active is bool;
+    }
+    function validCustomerCreate(orgId) {
       let d = request.resource.data;
+      return d.keys().hasOnly(['companyId','name','code','email','phone','notes','contactName','address','taxId','active','createdBy','createdAt']) &&
+        d.keys().hasAll(['companyId','name','code','email','phone','notes','active','createdBy','createdAt']) &&
+        activeCompany(orgId, d.companyId) && validCustomerFields(d) &&
+        d.active == true && d.createdBy == request.auth.uid && d.createdAt == request.time;
+    }
+    function validCustomerUpdate() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['companyId','name','code','email','phone','notes','contactName','address','taxId','active','createdBy','createdAt','updatedBy','updatedAt']) &&
+        d.keys().hasAll(['companyId','name','code','email','phone','notes','active','createdBy','createdAt','updatedBy','updatedAt']) &&
+        d.diff(resource.data).affectedKeys().hasOnly(['name','code','email','phone','notes','contactName','address','taxId','active','updatedBy','updatedAt']) &&
+        validCustomerFields(d) &&
+        d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    function validMovementFields(orgId, d) {
       return d.keys().hasOnly([
           'date','kind','fromEntityId','toEntityId','categoryId','loanId',
-          'counterparty','description','amountCents','taxCents','createdAt','createdBy'
+          'counterparty','description','amountCents','taxCents','createdAt','createdBy',
+          'externalRef','importBatchId','importRow','userFolio','customerId',
+          'revision','voided','voidReason','updatedBy','updatedAt'
         ]) &&
         d.keys().hasAll([
           'date','kind','fromEntityId','toEntityId','categoryId','loanId',
@@ -69,9 +104,21 @@ service cloud.firestore {
         d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw'] &&
         d.amountCents is int && d.amountCents > 0 && d.amountCents <= 100000000000 &&
         d.taxCents is int && d.taxCents >= 0 && d.taxCents <= d.amountCents &&
+        (d.kind in ['income','cost','expense'] ? d.taxCents < d.amountCents : d.taxCents == 0) &&
         d.counterparty is string && d.counterparty.size() <= 160 &&
         d.description is string && d.description.size() <= 500 &&
-        d.createdBy == request.auth.uid && d.createdAt == request.time &&
+        d.createdBy is string && d.createdAt is timestamp &&
+        (!d.keys().hasAny(['customerId']) ||
+          (d.kind == 'income' && validCustomerForIncome(orgId, d.customerId, d.toEntityId))) &&
+        (!d.keys().hasAny(['userFolio']) ||
+          (d.userFolio is string && d.userFolio.size() <= 100)) &&
+        (
+          (!d.keys().hasAny(['externalRef','importBatchId','importRow'])) ||
+          (d.keys().hasAll(['externalRef','importBatchId','importRow']) &&
+            d.externalRef is string && d.externalRef.size() > 0 && d.externalRef.size() <= 100 &&
+            d.importBatchId is string && d.importBatchId.size() > 0 && d.importBatchId.size() <= 80 &&
+            d.importRow is int && d.importRow >= 2 && d.importRow <= 10001)
+        ) &&
         (
           (d.kind == 'income' && d.fromEntityId == null &&
             activeEntity(orgId, d.toEntityId) &&
@@ -96,6 +143,74 @@ service cloud.firestore {
             get(movementDoc(orgId, d.loanId)).data.fromEntityId == d.toEntityId &&
             get(movementDoc(orgId, d.loanId)).data.toEntityId == d.fromEntityId)
         );
+    }
+
+
+    function validMovementCreate(orgId) {
+      let d = request.resource.data;
+      return validMovementFields(orgId, d) &&
+        d.createdBy == request.auth.uid && d.createdAt == request.time &&
+        !d.keys().hasAny(['revision','voided','voidReason','updatedBy','updatedAt']);
+    }
+    function auditDoc(orgId, movementId, revision) {
+      return /databases/$(database)/documents/organizations/$(orgId)/movements/$(movementId)/audit/$(revision);
+    }
+    // Proyección inmutable de los datos económicos para la bitácora.
+    function movementSnapshot(d) {
+      return {
+        'date': d.date, 'kind': d.kind,
+        'fromEntityId': d.fromEntityId, 'toEntityId': d.toEntityId,
+        'categoryId': d.categoryId, 'loanId': d.loanId,
+        'counterparty': d.counterparty, 'description': d.description,
+        'amountCents': d.amountCents, 'taxCents': d.taxCents,
+        'customerId': d.get('customerId', ''),
+        'voided': d.get('voided', false),
+        'voidReason': d.get('voidReason', ''),
+        'revision': d.get('revision', 0)
+      };
+    }
+    function validMovementUpdate(orgId, movementId) {
+      let d = request.resource.data;
+      let old = resource.data;
+      let revision = old.get('revision', 0) + 1;
+      let audit = getAfter(auditDoc(orgId, movementId, 'r' + string(revision))).data;
+      return old.kind in ['income','cost','expense','transfer','personal_draw'] &&
+        old.get('voided', false) == false &&
+        d.diff(old).affectedKeys().hasOnly([
+          'date','fromEntityId','toEntityId','categoryId',
+          'customerId','counterparty','description','amountCents','taxCents',
+          'voided','voidReason','revision','updatedBy','updatedAt'
+        ]) &&
+        d.kind == old.kind && d.loanId == old.loanId &&
+        d.createdAt == old.createdAt && d.createdBy == old.createdBy &&
+        d.revision == revision && d.updatedBy == request.auth.uid &&
+        d.updatedAt == request.time &&
+        d.get('voided', false) is bool &&
+        (d.get('voided', false) == false ||
+          (d.voidReason is string && d.voidReason.size() >= 8 && d.voidReason.size() <= 400 &&
+           d.diff(old).affectedKeys().hasOnly(['voided','voidReason','revision','updatedBy','updatedAt']))) &&
+        (d.get('voided', false) ? true : validMovementFields(orgId, d)) &&
+        audit.revision == revision && audit.createdBy == request.auth.uid &&
+        audit.createdAt == request.time &&
+        audit.reason is string && audit.reason.size() >= 8 && audit.reason.size() <= 400 &&
+        audit.action == (d.get('voided', false) ? 'void' : 'edit') &&
+        audit.before == movementSnapshot(old) && audit.after == movementSnapshot(d);
+    }
+    function validAuditCreate(orgId, movementId, revisionId) {
+      let d = request.resource.data;
+      let old = get(movementDoc(orgId, movementId)).data;
+      let updated = getAfter(movementDoc(orgId, movementId)).data;
+      return d.keys().hasOnly(['action','reason','revision','createdBy','createdAt','before','after']) &&
+        d.keys().hasAll(['action','reason','revision','createdBy','createdAt','before','after']) &&
+        old.kind in ['income','cost','expense','transfer','personal_draw'] &&
+        revisionId == 'r' + string(old.get('revision', 0) + 1) &&
+        updated.revision == old.get('revision', 0) + 1 &&
+        updated.updatedAt == request.time && updated.updatedBy == request.auth.uid &&
+        d.revision == updated.revision && d.createdBy == request.auth.uid &&
+        d.createdAt == request.time &&
+        d.action == (updated.get('voided', false) ? 'void' : 'edit') &&
+        d.reason is string && d.reason.size() >= 8 && d.reason.size() <= 400 &&
+        d.before == movementSnapshot(old) && d.after == movementSnapshot(updated);
     }
 
     match /organizations/{orgId} {
@@ -128,11 +243,22 @@ service cloud.firestore {
           request.resource.data.active is bool;
         allow delete: if false;
       }
+      match /customers/{customerId} {
+        allow get, list: if isMember(orgId);
+        allow create: if isWriter(orgId) && validCustomerCreate(orgId);
+        allow update: if isWriter(orgId) && validCustomerUpdate();
+        allow delete: if false;
+      }
       match /movements/{movementId} {
         allow get, list: if isMember(orgId);
-        allow create: if isWriter(orgId) && validMovement(orgId);
-        // Auditoría básica: sin modificación ni borrado de movimientos.
-        allow update, delete: if false;
+        allow create: if isWriter(orgId) && validMovementCreate(orgId);
+        allow update: if isWriter(orgId) && validMovementUpdate(orgId, movementId);
+        allow delete: if false;
+        match /audit/{revisionId} {
+          allow get, list: if isMember(orgId);
+          allow create: if isWriter(orgId) && validAuditCreate(orgId, movementId, revisionId);
+          allow update, delete: if false;
+        }
       }
     }
     match /{document=**} {

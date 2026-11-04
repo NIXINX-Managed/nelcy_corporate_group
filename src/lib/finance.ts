@@ -71,9 +71,15 @@ export function centsToMoney(cents: number): string {
   }).format(cents / 100);
 }
 
+// Acepta números introducidos o pegados desde Excel/Firestore con agrupación
+// en miles (13,808.20), sin interpretar formatos ambiguos como 13,80.
+// El cálculo se realiza con enteros para evitar errores de precisión binaria.
 export function dollarsToCents(raw: string): number {
-  if (!/^\d+(\.\d{1,2})?$/.test(raw.trim())) return NaN;
-  return Math.round(Number(raw) * 100);
+  const value = raw.trim().replace(/^[\$]\s*/, "").replace(/\s*CAD$/i, "").trim();
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(value)) return NaN;
+  const [whole, fraction = ""] = value.replace(/,/g, "").split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0") || "0");
+  return Number.isSafeInteger(cents) ? cents : NaN;
 }
 
 export function selectedCashDelta(m: Movement, selectedIds: Set<string>): number {
