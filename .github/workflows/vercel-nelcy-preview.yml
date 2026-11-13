@@ -1,0 +1,43 @@
+name: Nelcy Corporate Group - Vercel Preview
+
+# Preview is manual only; never replaces the production domain.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nelcy-corporate-group-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy_nelcy:
+    name: Deploy Nelcy corporate group (preview)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN_NELCY_CORPORATE_GROUP }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID_NELCY_CORPORATE_GROUP }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID_NELCY_CORPORATE_GROUP }}
+    steps:
+      - name: Checkout NIXINX-managed source
+        uses: actions/checkout@v4
+
+      - name: Verify scoped Vercel configuration
+        shell: bash
+        run: |
+          if [[ -z "$VERCEL_TOKEN" || -z "$VERCEL_ORG_ID" || -z "$VERCEL_PROJECT_ID" ]]; then
+            echo 'Missing Nelcy Vercel token, team ID, or project ID.' >&2
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Link existing customer project and retrieve preview metadata
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      # Build remotely on Vercel: sensitive environment variables remain in the customer's Vercel.
+      - name: Build and publish preview remotely on Vercel
+        run: vercel deploy --yes --token="$VERCEL_TOKEN"
