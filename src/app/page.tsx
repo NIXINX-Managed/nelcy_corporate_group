@@ -19,9 +19,11 @@ import { firebaseServices, isFirebaseConfigured, organizationId } from "@/lib/fi
 import { BulkImport } from "@/components/bulk-import";
 import { CatalogImport } from "@/components/catalog-import";
 import { CustomerCatalog } from "@/components/customer-catalog";
+import { CustomerImport } from "@/components/customer-import";
+import { WarehouseExport } from "@/components/warehouse-export";
 import { MovementActions } from "@/components/movement-actions";
 
-type Tab = "dashboard" | "movements" | "entities" | "categories" | "customers";
+type Tab = "dashboard" | "movements" | "entities" | "categories" | "customers" | "warehouse";
 type Status = "loading" | "login" | "unauthorized" | "ready" | "config-error";
 
 const dateToday = () => {
@@ -318,6 +320,7 @@ export default function Home() {
         {([ ["dashboard", "Resumen"], ["movements", "Movimientos"],
           ["entities", "Empresas y personal"], ["customers", "Clientes"], ["categories", "Catálogos"] ] as const).map(([id, label]) =>
           <button key={id} className={tab === id ? "active" : ""} onClick={() => { setTab(id); setNotice(""); }}>{label}</button>)}
+        {canWrite && <button className={tab === "warehouse" ? "active" : ""} onClick={() => { setTab("warehouse"); setNotice(""); }}>Exportación DWH</button>}
       </nav>
       <section className="scope-bar" aria-label="Seleccionar perspectiva de información">
         <div className="scope-description"><strong>Vista activa: {perspectiveLabel}</strong>
@@ -407,6 +410,7 @@ export default function Home() {
         </div></section>
         <CustomerCatalog key={selectedEntity} entities={entities} customers={customers} selectedEntity={selectedEntity}
           uid={user?.uid ?? ""} canWrite={canWrite} />
+        {canWrite && user && <CustomerImport entities={entities} customers={customers} uid={user.uid} />}
       </>}
 
       {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos reutilizables de ingresos, costos y gastos.</p></div></section>
@@ -419,6 +423,11 @@ export default function Home() {
           <div className="table-wrap"><table><thead><tr><th>Concepto</th><th>Clasificación</th><th>Estado</th></tr></thead><tbody>{categories.slice().sort((a,b) => a.name.localeCompare(b.name)).map((c) =>
             <tr key={c.id}><td>{c.name}</td><td>{categoriesLabels[c.kind]}</td><td>{c.active ? "Activo" : "Inactivo"}</td></tr>)}</tbody></table></div>
           {!categories.length && <p className="empty">Crea al menos un concepto para poder registrar ingresos o gastos.</p>}</section></>}
+
+      {canWrite && tab === "warehouse" && <>
+        <section className="section-heading"><div><p className="eyebrow">EXTRACCIÓN DE DATOS</p><h1>Exportación para BigQuery</h1><p>Tablas normalizadas para el futuro Data Warehouse de Cataleya.</p></div></section>
+        <WarehouseExport />
+      </>}
 
       {tab === "movements" && <><section className="section-heading"><div><p className="eyebrow">OPERACIÓN</p><h1>Registro de movimientos</h1>
         <p>Un préstamo o transferencia se registra una sola vez y aparece en las dos entidades.</p></div></section>
