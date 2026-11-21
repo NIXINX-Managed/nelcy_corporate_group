@@ -1,0 +1,30 @@
+name: Nelcy - Validate Pull Request
+
+# Solo validación: no ejecuta Vercel ni cambia Firestore.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Regression, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Regression
+        run: TZ=America/Toronto node tests/regression-check.cjs
+      - name: ESLint
+        run: npm run lint
+      - name: Next.js build
+        run: npm run build
