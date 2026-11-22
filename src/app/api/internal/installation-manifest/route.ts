@@ -1,7 +1,5 @@
 import {NextRequest} from "next/server";
 
-export const runtime="nodejs";
-export const dynamic="force-dynamic";
 
 // Public, non-secret handshake. Control verifies the EXACT hostname and sandbox
 // Firebase binding before approving an installation. Never exposes credentials.
