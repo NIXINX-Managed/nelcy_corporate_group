@@ -1,4 +1,5 @@
 import type {Metadata,Viewport} from "next";
+import {Suspense} from "react";
 import {headers} from "next/headers";
 import PwaRegistration from "@/components/pwa-registration";
 import {checkCorporateLicense} from "@/lib/nixinx-control-server";
@@ -28,12 +29,17 @@ function Suspended({referenceCode}:{referenceCode:string}){
  </main>;
 }
 
-export default async function RootLayout({children}:Readonly<{children:React.ReactNode}>){
+async function CorporateEntitlementBoundary({children}:{children:React.ReactNode}){
  const host=(await headers()).get("host")||"";
  const decision=await checkCorporateLicense(host);
- return <html lang="es"><body>{
-  decision.allowed
-    ?<><PwaRegistration/>{children}</>
-    :<Suspended referenceCode={decision.referenceCode}/>
- }</body></html>;
+ return decision.allowed
+   ?<><PwaRegistration/>{children}</>
+   :<Suspended referenceCode={decision.referenceCode}/>;
+}
+export default function RootLayout({children}:Readonly<{children:React.ReactNode}>){
+ return <html lang="es"><body>
+  <Suspense fallback={<main style={{padding:48,color:"#e6edf7",background:"#0b1425",minHeight:"100vh"}}>Validando acceso al servicio…</main>}>
+   <CorporateEntitlementBoundary>{children}</CorporateEntitlementBoundary>
+  </Suspense>
+ </body></html>;
 }
