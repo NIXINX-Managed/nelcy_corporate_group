@@ -24,4 +24,5 @@ test("Preview refuses live Nelcy Firebase and missing/mismatched sandbox",()=>{
  assert.equal(previewDataIsolationVerified({...a,expectedPreviewProject:undefined}),false);
  assert.equal(previewDataIsolationVerified({...a,firebaseProjectId:"other-test-project"}),false);
  assert.equal(previewDataIsolationVerified({...a,firebaseProjectId:"other-test-project",expectedPreviewProject:"other-test-project"}),true);
+ assert.equal(previewDataIsolationVerified({...a,environment:"production",firebaseProjectId:"nelcy-corporate-group"}),false);
 });
