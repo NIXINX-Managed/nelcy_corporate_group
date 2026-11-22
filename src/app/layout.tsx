@@ -21,10 +21,10 @@ function Suspended({referenceCode}:{referenceCode:string}){
  }}>
    <section style={{maxWidth:520,padding:40,borderRadius:18,border:"1px solid #263651",background:"#121e33",textAlign:"center"}}>
     <h1 style={{fontSize:28,marginBottom:18}}>Servicio no disponible</h1>
-    <p style={{lineHeight:1.6}}>Este servicio no se encuentra disponible en este momento.</p>
-    <p style={{fontSize:14,opacity:.8,marginTop:24}}>Código de referencia</p>
-    <p style={{fontFamily:"monospace",fontWeight:700,letterSpacing:2,fontSize:21}}>{referenceCode}</p>
-    <p style={{lineHeight:1.6,marginTop:24}}>Comuníquese con soporte de NIXINX e indique el código de referencia.</p>
+    <p style={{lineHeight:1.6,color:"#D4DDEC"}}>Este servicio no se encuentra disponible en este momento.</p>
+    <p style={{fontSize:14,color:"#C2D0E5",marginTop:24}}>Código de referencia</p>
+    <p style={{fontFamily:"monospace",color:"#E7F3FF",fontWeight:700,letterSpacing:2,fontSize:21}}>{referenceCode}</p>
+    <p style={{lineHeight:1.6,color:"#D4DDEC",marginTop:24}}>Comuníquese con soporte de NIXINX e indique el código de referencia.</p>
    </section>
  </main>;
 }
