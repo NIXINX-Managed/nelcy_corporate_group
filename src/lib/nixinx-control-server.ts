@@ -46,7 +46,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.token},
       body:JSON.stringify({
        tenantId:cfg.tenantId,appId:"corporate",hostname:canonical,
-       environment:cfg.env==="production"?"production":"preview"
+       environment:"preview"
       })
    });
    const body=await response.json().catch(()=>null) as {allowed?:unknown;referenceCode?:unknown}|null;
