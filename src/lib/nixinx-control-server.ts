@@ -8,7 +8,7 @@ function referenceCode(){return "NX-"+randomBytes(5).toString("hex").toUpperCase
 export function previewDataIsolationVerified(options:{
  environment:string|undefined;firebaseProjectId:string|undefined;expectedPreviewProject:string|undefined
 }):boolean{
- if(options.environment!=="preview")return true;
+ if(options.environment!=="preview")return false;
  return Boolean(
    options.firebaseProjectId &&
    options.expectedPreviewProject &&
@@ -27,7 +27,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
  };
  // Fail closed for noncanonical hostnames, missing secrets and shared client data.
  const canonical=cfg.hostname?.trim().toLowerCase();
- if(!canonical||host.toLowerCase()!==canonical ||
+ if(cfg.env!=="preview" || !canonical||host.toLowerCase()!==canonical ||
     !cfg.endpoint||!cfg.endpoint.startsWith("https://")||
     !cfg.token||cfg.token.length<32||
     !cfg.tenantId ||
