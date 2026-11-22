@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "applicationId": "corporate",
+  "applicationName": "Corporate",
+  "source": "src/app/page.tsx",
+  "moduleSource": "type Tab",
+  "modules": [
+    {"id":"dashboard","name":"Dashboard financiero"},
+    {"id":"movements","name":"Movimientos"},
+    {"id":"entities","name":"Entidades"},
+    {"id":"categories","name":"Categorías"},
+    {"id":"customers","name":"Clientes"},
+    {"id":"warehouse","name":"Exportación DWH"}
+  ]
+}
