@@ -25,7 +25,7 @@ jobs:
       - name: Regression
         run: TZ=America/Toronto node tests/regression-check.cjs
       - name: NIXINX Control contract tests
-        run: node --test tests/nixinx-control-gate.test.mjs
+        run: node --test tests/nixinx-control-gate.test.mjs tests/nixinx-preview-rules.test.mjs
       - name: ESLint
         run: npm run lint
       - name: Next.js build
