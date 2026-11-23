@@ -1,6 +1,7 @@
 import type {Metadata,Viewport} from "next";
 import {Suspense} from "react";
 import {headers} from "next/headers";
+import {connection} from "next/server";
 import PwaRegistration from "@/components/pwa-registration";
 import {checkCorporateLicense} from "@/lib/nixinx-control-server";
 import "./globals.css";
@@ -30,6 +31,7 @@ function Suspended({referenceCode}:{referenceCode:string}){
 }
 
 async function CorporateEntitlementBoundary({children}:{children:React.ReactNode}){
+ await connection();
  const host=(await headers()).get("host")||"";
  const decision=await checkCorporateLicense(host);
  return decision.allowed
