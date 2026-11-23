@@ -62,16 +62,22 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
    return {allowed:false,referenceCode:code};
  }
  try{
-   const url=new URL("/api/internal/entitlements",cfg.endpoint);
+   const writerOrigin=isProduction?process.env.NIXINX_CORPORATE_LEASE_WRITER_URL?.trim():undefined;
+   const writerToken=process.env.NIXINX_CORPORATE_LEASE_WRITER_TOKEN;
+   if(writerOrigin&&(!/^https:\/\/[a-z0-9-]+\.run\.app$/.test(writerOrigin)||!writerToken||writerToken.length<32)){
+     console.warn("corporate_control_unavailable",{referenceCode:code,reason:"INVALID_WRITER_CONFIGURATION"});
+     return {allowed:false,referenceCode:code};
+   }
+   const url=writerOrigin?new URL("/renew",writerOrigin):new URL("/api/internal/entitlements",cfg.endpoint);
    const headers:Record<string,string>={
-      "Content-Type":"application/json","Authorization":"Bearer "+cfg.token
+      "Content-Type":"application/json","Authorization":"Bearer "+(writerOrigin?writerToken:cfg.token)
    };
    const bypass=process.env.NIXINX_CONTROL_PREVIEW_PROTECTION_BYPASS?.trim();
    if(isPilot && url.origin===controlPreviewOrigin && bypass){
      headers["x-vercel-protection-bypass"]=bypass;
    }
    const response=await fetch(url,{
-      method:"POST",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(5000),
+      method:"POST",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(writerOrigin?15000:5000),
       headers,
       body:JSON.stringify({
        tenantId:cfg.tenantId,appId:"corporate",hostname:canonical,
