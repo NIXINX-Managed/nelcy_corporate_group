@@ -16,13 +16,17 @@ export function previewDataIsolationVerified(options:{
    options.firebaseProjectId!=="nelcy-corporate-group"
  );
 }
+const pilotHostname="nelcy-preview.corporate.nixinx.app";
+const controlPreviewOrigin="https://nixinx-control-git-feat-control-corporat-ceb7ed-nixinx-projects.vercel.app";
+
 export async function checkCorporateLicense(host:string):Promise<CorporateDecision>{
  const code=referenceCode();
+ const isPilot=process.env.VERCEL_ENV==="preview"&&host.toLowerCase()===pilotHostname;
  const cfg={
-   endpoint:process.env.NIXINX_CONTROL_API_URL,
+   endpoint:process.env.NIXINX_CONTROL_API_URL?.trim()||(isPilot?controlPreviewOrigin:undefined),
    token:process.env.NIXINX_CONTROL_SERVICE_TOKEN,
    hostname:process.env.NIXINX_CORPORATE_HOSTNAME,
-   tenantId:process.env.NIXINX_CONTROL_TENANT_ID,
+   tenantId:process.env.NIXINX_CONTROL_TENANT_ID?.trim()||(isPilot?"corporate-sbx":undefined),
    env:process.env.VERCEL_ENV,
  };
  // Fail closed for noncanonical hostnames, missing secrets and shared client data.
@@ -56,8 +60,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       "Content-Type":"application/json","Authorization":"Bearer "+cfg.token
    };
    const bypass=process.env.NIXINX_CONTROL_PREVIEW_PROTECTION_BYPASS;
-   if(canonical==="nelcy-preview.corporate.nixinx.app" &&
-      url.origin==="https://nixinx-control-git-feat-control-corporat-ceb7ed-nixinx-projects.vercel.app" && bypass){
+   if(isPilot && url.origin===controlPreviewOrigin && bypass){
      headers["x-vercel-protection-bypass"]=bypass;
    }
    const response=await fetch(url,{
