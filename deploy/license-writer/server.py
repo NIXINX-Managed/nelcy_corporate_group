@@ -11,10 +11,18 @@ CONTROL = "https://nixinx-control.nixinx.org/api/internal/entitlement-decision"
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+opener = urllib.request.build_opener(NoRedirect())
+
+
 def request(url, headers, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=5) as response:
+    with opener.open(req, timeout=5) as response:
         return json.load(response)
 
 
@@ -37,7 +45,7 @@ def renew():
     if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project) or not re.fullmatch(r"[a-zA-Z0-9_-]{2,80}", org):
         raise ValueError("Invalid Firestore target")
     metadata = {"Metadata-Flavor": "Google"}
-    with urllib.request.urlopen(urllib.request.Request(METADATA + "/project/project-id", headers=metadata), timeout=3) as response:
+    with opener.open(urllib.request.Request(METADATA + "/project/project-id", headers=metadata), timeout=3) as response:
         if response.read().decode().strip() != project:
             raise ValueError("Writer must run inside the customer's project")
     now = dt.datetime.now(dt.timezone.utc)
