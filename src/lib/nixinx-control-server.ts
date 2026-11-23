@@ -36,7 +36,18 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       firebaseProjectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
       expectedPreviewProject:process.env.NIXINX_PREVIEW_FIREBASE_PROJECT_ID
     })){
-   console.warn("corporate_control_unavailable",JSON.stringify({referenceCode:code,reason:"MISSING_CONFIG_OR_ISOLATION"}));
+   console.warn("corporate_control_unavailable",JSON.stringify({referenceCode:code,reason:"MISSING_CONFIG_OR_ISOLATION",checks:{
+    preview:cfg.env==="preview",
+    canonicalHost:Boolean(canonical&&host.toLowerCase()===canonical),
+    controlUrl:Boolean(cfg.endpoint?.startsWith("https://")),
+    serviceToken:Boolean(cfg.token&&cfg.token.length>=32),
+    tenant:Boolean(cfg.tenantId),
+    firebaseIsolated:previewDataIsolationVerified({
+      environment:cfg.env,
+      firebaseProjectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      expectedPreviewProject:process.env.NIXINX_PREVIEW_FIREBASE_PROJECT_ID
+    })
+   }}));
    return {allowed:false,referenceCode:code};
  }
  try{
@@ -58,6 +69,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       })
    });
    const body=await response.json().catch(()=>null) as {allowed?:unknown;referenceCode?:unknown}|null;
+   if(!response.ok)console.warn("corporate_control_http",JSON.stringify({referenceCode:code,status:response.status}));
    if(!response.ok || body?.allowed!==true)return {allowed:false,referenceCode:typeof body?.referenceCode==="string"&&/^NX-[A-F0-9]{10}$/.test(body.referenceCode)?body.referenceCode:code};
    return {allowed:true,referenceCode:code};
  }catch{
