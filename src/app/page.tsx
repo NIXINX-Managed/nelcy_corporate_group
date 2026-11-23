@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp,
@@ -46,6 +47,7 @@ function messageFromError(error: unknown) {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<Status>(() => isFirebaseConfigured() ? "loading" : "config-error");
   const [role, setRole] = useState<UserRole | null>(null);
@@ -78,6 +80,20 @@ export default function Home() {
   const [userFolio, setUserFolio] = useState("");
 
   useEffect(() => {
+    if (!user) return;
+    // Re-run the server license check within the 30-second sandbox lease.
+    const renewWhileVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const interval = window.setInterval(renewWhileVisible, 10_000);
+    document.addEventListener("visibilitychange", renewWhileVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", renewWhileVisible);
+    };
+  }, [router, user]);
+
+  useEffect(() => {
     if (!isFirebaseConfigured()) return;
     const { auth } = firebaseServices();
     return onAuthStateChanged(auth, (current) => {
@@ -108,19 +124,32 @@ export default function Home() {
           return;
         }
         setRole(access.data().role as UserRole);
-        const fail = (error: Error) => { if (active) setNotice(`Error de lectura: ${error.message}`); };
-        unsubscribers.push(onSnapshot(collection(org, "entities"), (snap) => {
-          if (active) setEntities(readDocs<Entity>(snap.docs));
-        }, fail));
-        unsubscribers.push(onSnapshot(collection(org, "categories"), (snap) => {
-          if (active) setCategories(readDocs<Category>(snap.docs));
-        }, fail));
-        unsubscribers.push(onSnapshot(collection(org, "customers"), (snap) => {
-          if (active) setCustomers(readDocs<Customer>(snap.docs));
-        }, fail));
-        unsubscribers.push(onSnapshot(collection(org, "movements"), (snap) => {
-          if (active) setMovements(readDocs<Movement>(snap.docs));
-        }, fail));
+        function subscribe<T extends { id: string }>(name: string, update: (rows: T[]) => void) {
+          let unsubscribe: (() => void) | undefined;
+          let retryTimer: number | undefined;
+          const listen = () => {
+            if (!active) return;
+            unsubscribe = onSnapshot(collection(org, name), (snap) => {
+              if (active) update(readDocs<T>(snap.docs));
+            }, (error) => {
+              if (!active) return;
+              setNotice(`Error de lectura: ${error.message}`);
+              if (error.code === "permission-denied") {
+                // Firestore closes denied listeners. Reconnect after the next lease renewal.
+                retryTimer = window.setTimeout(listen, 12_000);
+              }
+            });
+          };
+          unsubscribers.push(() => {
+            unsubscribe?.();
+            window.clearTimeout(retryTimer);
+          });
+          listen();
+        }
+        subscribe<Entity>("entities", setEntities);
+        subscribe<Category>("categories", setCategories);
+        subscribe<Customer>("customers", setCustomers);
+        subscribe<Movement>("movements", setMovements);
         setStatus("ready");
       } catch (error) {
         if (active) { setStatus("unauthorized"); setNotice(messageFromError(error)); }
