@@ -64,7 +64,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
  try{
    const writerOrigin=isProduction?process.env.NIXINX_CORPORATE_LEASE_WRITER_URL?.trim():undefined;
    const writerToken=process.env.NIXINX_CORPORATE_LEASE_WRITER_TOKEN;
-   if(writerOrigin&&(!/^https:\/\/[a-z0-9-]+\.run\.app$/.test(writerOrigin)||!writerToken||writerToken.length<32)){
+   if(writerOrigin&&(!/^https:\/\/[a-z0-9-]+(?:-[0-9]{12}\.[a-z]+(?:-[a-z0-9]+)+[0-9])?\.run\.app$/.test(writerOrigin)||!writerToken||writerToken.length<32)){
      console.warn("corporate_control_unavailable",{referenceCode:code,reason:"INVALID_WRITER_CONFIGURATION"});
      return {allowed:false,referenceCode:code};
    }
