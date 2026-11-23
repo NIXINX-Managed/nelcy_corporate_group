@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   addDoc, collection, doc, getDoc, onSnapshot, serverTimestamp,
@@ -46,6 +47,7 @@ function messageFromError(error: unknown) {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<Status>(() => isFirebaseConfigured() ? "loading" : "config-error");
   const [role, setRole] = useState<UserRole | null>(null);
@@ -76,6 +78,20 @@ export default function Home() {
   const [customerId, setCustomerId] = useState("");
   const [description, setDescription] = useState("");
   const [userFolio, setUserFolio] = useState("");
+
+  useEffect(() => {
+    if (!user) return;
+    // Re-run the server license check within the 30-second sandbox lease.
+    const renewWhileVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const interval = window.setInterval(renewWhileVisible, 10_000);
+    document.addEventListener("visibilitychange", renewWhileVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", renewWhileVisible);
+    };
+  }, [router, user]);
 
   useEffect(() => {
     if (!isFirebaseConfigured()) return;
