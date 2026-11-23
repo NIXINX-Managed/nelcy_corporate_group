@@ -16,11 +16,18 @@ export function previewDataIsolationVerified(options:{
    options.firebaseProjectId!=="nelcy-corporate-group"
  );
 }
+const productionHostname="nelcy.corporate.nixinx.app";
+const productionControlOrigin="https://nixinx-control.nixinx.org";
 const pilotHostname="nelcy-preview.corporate.nixinx.app";
 const controlPreviewOrigin="https://nixinx-control-git-feat-control-corporat-ceb7ed-nixinx-projects.vercel.app";
 
 export async function checkCorporateLicense(host:string):Promise<CorporateDecision>{
  const code=referenceCode();
+ const isProduction=process.env.VERCEL_ENV==="production";
+ const productionGateEnabled=process.env.NIXINX_CORPORATE_PRODUCTION_GATE==="enabled";
+ const productionHost=host.toLowerCase()===productionHostname;
+ // Existing deployments continue to use their Firebase membership rules.
+ if(isProduction&&!productionGateEnabled)return {allowed:true,referenceCode:code};
  const isPilot=process.env.VERCEL_ENV==="preview"&&host.toLowerCase()===pilotHostname;
  const cfg={
    endpoint:process.env.NIXINX_CONTROL_API_URL?.trim()||(isPilot?controlPreviewOrigin:undefined),
@@ -31,26 +38,26 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
  };
  // Fail closed for noncanonical hostnames, missing secrets and shared client data.
  const canonical=cfg.hostname?.trim().toLowerCase();
- if(cfg.env!=="preview" || !canonical||host.toLowerCase()!==canonical ||
+ const firebaseProjectId=process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+ const targetVerified=isProduction
+   ?productionHost&&canonical===productionHostname&&firebaseProjectId==="nelcy-corporate-group"&&cfg.endpoint===productionControlOrigin
+   :previewDataIsolationVerified({
+      environment:cfg.env,
+      firebaseProjectId,
+      expectedPreviewProject:process.env.NIXINX_PREVIEW_FIREBASE_PROJECT_ID
+    });
+ if(!canonical||host.toLowerCase()!==canonical ||
     !cfg.endpoint||!cfg.endpoint.startsWith("https://")||
     !cfg.token||cfg.token.length<32||
     !cfg.tenantId ||
-    !previewDataIsolationVerified({
-      environment:cfg.env,
-      firebaseProjectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      expectedPreviewProject:process.env.NIXINX_PREVIEW_FIREBASE_PROJECT_ID
-    })){
+    !targetVerified){
    console.warn("corporate_control_unavailable",JSON.stringify({referenceCode:code,reason:"MISSING_CONFIG_OR_ISOLATION",checks:{
     preview:cfg.env==="preview",
     canonicalHost:Boolean(canonical&&host.toLowerCase()===canonical),
     controlUrl:Boolean(cfg.endpoint?.startsWith("https://")),
     serviceToken:Boolean(cfg.token&&cfg.token.length>=32),
     tenant:Boolean(cfg.tenantId),
-    firebaseIsolated:previewDataIsolationVerified({
-      environment:cfg.env,
-      firebaseProjectId:process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      expectedPreviewProject:process.env.NIXINX_PREVIEW_FIREBASE_PROJECT_ID
-    })
+    firebaseTargetVerified:targetVerified
    }}));
    return {allowed:false,referenceCode:code};
  }
@@ -68,7 +75,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       headers,
       body:JSON.stringify({
        tenantId:cfg.tenantId,appId:"corporate",hostname:canonical,
-       environment:"preview"
+       environment:isProduction?"production":"preview"
       })
    });
    const body=await response.json().catch(()=>null) as {allowed?:unknown;referenceCode?:unknown}|null;
