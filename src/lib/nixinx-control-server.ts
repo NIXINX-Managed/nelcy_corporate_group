@@ -59,7 +59,7 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
    const headers:Record<string,string>={
       "Content-Type":"application/json","Authorization":"Bearer "+cfg.token
    };
-   const bypass=process.env.NIXINX_CONTROL_PREVIEW_PROTECTION_BYPASS;
+   const bypass=process.env.NIXINX_CONTROL_PREVIEW_PROTECTION_BYPASS?.trim();
    if(isPilot && url.origin===controlPreviewOrigin && bypass){
      headers["x-vercel-protection-bypass"]=bypass;
    }
@@ -72,7 +72,12 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
       })
    });
    const body=await response.json().catch(()=>null) as {allowed?:unknown;referenceCode?:unknown}|null;
-   if(!response.ok)console.warn("corporate_control_http",JSON.stringify({referenceCode:code,status:response.status}));
+   if(!response.ok)console.warn("corporate_control_http",JSON.stringify({
+     referenceCode:code,status:response.status,
+     bypassConfigured:Boolean(bypass),
+     bypassSent:Boolean(headers["x-vercel-protection-bypass"]),
+     controlResponded:typeof body?.referenceCode==="string"
+   }));
    if(!response.ok || body?.allowed!==true)return {allowed:false,referenceCode:typeof body?.referenceCode==="string"&&/^NX-[A-F0-9]{10}$/.test(body.referenceCode)?body.referenceCode:code};
    return {allowed:true,referenceCode:code};
  }catch{
