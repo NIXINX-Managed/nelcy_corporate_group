@@ -41,9 +41,17 @@ export async function checkCorporateLicense(host:string):Promise<CorporateDecisi
  }
  try{
    const url=new URL("/api/internal/entitlements",cfg.endpoint);
+   const headers:Record<string,string>={
+      "Content-Type":"application/json","Authorization":"Bearer "+cfg.token
+   };
+   const bypass=process.env.NIXINX_CONTROL_PREVIEW_PROTECTION_BYPASS;
+   if(canonical==="nelcy-preview.corporate.nixinx.app" &&
+      url.origin==="https://nixinx-control-git-feat-control-corporat-ceb7ed-nixinx-projects.vercel.app" && bypass){
+     headers["x-vercel-protection-bypass"]=bypass;
+   }
    const response=await fetch(url,{
-      method:"POST",cache:"no-store",signal:AbortSignal.timeout(5000),
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.token},
+      method:"POST",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(5000),
+      headers,
       body:JSON.stringify({
        tenantId:cfg.tenantId,appId:"corporate",hostname:canonical,
        environment:"preview"
