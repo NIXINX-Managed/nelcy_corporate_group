@@ -1,4 +1,4 @@
-import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
+import type { Category, Customer, Entity, Movement, MovementKind, PaymentAccount, PaymentMethod, MovementType } from "@/lib/finance";
 import { dollarsToCents, movementLabels } from "@/lib/finance";
 
 export const BULK_VERSION = "NELCY-LAYOUT-5";
@@ -22,6 +22,8 @@ const OLD_BULK_HEADERS = [
   "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
   "Contraparte / proveedor", "Observaciones", "ID préstamo original",
 ] as const;
+const PAYMENT_HEADERS = ["Cuenta origen (opcional)", "Cuenta destino (opcional)", "Forma de pago (opcional)", "Clasificación (opcional)"] as const;
+const HST_HEADER = "HST incluido (CAD) (opcional)";
 export const MAX_IMPORT_ROWS = 1000;
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const ordinaryKinds = ["income", "cost", "expense"];
@@ -40,6 +42,10 @@ export type ImportableMovement = {
   taxCents: number;
   userFolio?: string;
   customerId?: string;
+  fromAccountId?: string;
+  toAccountId?: string;
+  paymentMethodId?: string;
+  movementTypeId?: string;
 };
 export type PreviewLine = {
   row: number;
@@ -138,9 +144,10 @@ function filenameDownload(data: BlobPart, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], customers: Customer[], movements: Movement[], scopedEntityId = "") {
+export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], customers: Customer[], movements: Movement[], scopedEntityId = "",
+  accounts: PaymentAccount[] = [], methods: PaymentMethod[] = [], types: MovementType[] = []) {
   if (ordinaryKinds.includes(kind)) {
-    return downloadScopedLayout(kind, scopedEntityId, entities, categories, customers);
+    return downloadScopedLayout(kind, scopedEntityId, entities, categories, customers, accounts, methods, types);
   }
   const ExcelJS = await excelJs();
   const wb = new ExcelJS.Workbook();
@@ -167,26 +174,33 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   const loans = movements.filter((m) => m.kind === "loan").sort((a,b)=> b.date.localeCompare(a.date));
   const activeCompanies = new Set(active.filter((e) => e.type === "company").map((e) => e.id));
   const activeCustomers = kind === "income" ? customers.filter((c) => c.active && activeCompanies.has(c.companyId)).sort((a,b) => a.companyId.localeCompare(b.companyId) || a.name.localeCompare(b.name)) : [];
+  const activeAccounts = accounts.filter(a=>a.active);
+  const activeMethods = methods.filter(m=>m.active);
+  const activeTypes = types.filter(t=>t.active&&t.kind===kind);
   catalog.columns = [
     { header: "Entidades", width: 54 }, { header: "Conceptos", width: 54 },
     { header: "Préstamos existentes", width: 74 }, { header: "Clientes activos (empresa indicada)", width: 92 },
+    {header:"Cuentas",width:58},{header:"Formas de pago",width:50},{header:"Clasificaciones",width:54},
   ];
-  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length, activeCustomers.length); i++) {
+  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length, activeCustomers.length, activeAccounts.length, activeMethods.length, activeTypes.length); i++) {
     catalog.addRow([
       active[i] ? token(active[i].id, active[i].name) : "",
       relevant[i] ? token(relevant[i].id, relevant[i].name) : "",
       loans[i] ? loanToken(loans[i]) : "",
       activeCustomers[i] ? customerToken(activeCustomers[i], entities) : "",
+      activeAccounts[i] ? token(activeAccounts[i].id,activeAccounts[i].name) : "",
+      activeMethods[i] ? token(activeMethods[i].id,activeMethods[i].name) : "",
+      activeTypes[i] ? token(activeTypes[i].id,activeTypes[i].name) : "",
     ]);
   }
   catalog.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   catalog.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244C7D" } };
   const ws = wb.addWorksheet("Movimientos", { views: [{ state: "frozen", ySplit: 1 }] });
-  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [30, 22, 52, 52, 52, 23, 27, 80, 35, 55, 70][i] }));
+  ws.columns = [...BULK_HEADERS, ...PAYMENT_HEADERS].map((header, i) => ({ header, width: [30,22,52,52,52,23,27,80,35,55,70,55,55,45,55][i] }));
   ws.getRow(1).height = 33;
   ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D365A" } };
-  ws.autoFilter = { from: "A1", to: "K1" };
+  ws.autoFilter = { from: "A1", to: "O1" };
   if (active.length) wb.definedNames.add(`Catalogos!$A$2:$A$${active.length + 1}`, "ListaEntidades");
   if (relevant.length) wb.definedNames.add(`Catalogos!$B$2:$B$${relevant.length + 1}`, "ListaConceptos");
   if (loans.length) wb.definedNames.add(`Catalogos!$C$2:$C$${loans.length + 1}`, "ListaPrestamos");
@@ -211,7 +225,8 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
 
 
 // Layout por empresa para operaciones ordinarias: no muestra columnas de otras operaciones.
-async function downloadScopedLayout(kind: MovementKind, entityId: string, entities: Entity[], categories: Category[], customers: Customer[]) {
+async function downloadScopedLayout(kind: MovementKind, entityId: string, entities: Entity[], categories: Category[], customers: Customer[],
+  accounts: PaymentAccount[], methods: PaymentMethod[], types: MovementType[]) {
   const company = entities.find((e) => e.id === entityId && e.type === "company" && e.active);
   if (!company) throw new Error("Selecciona una compañía activa antes de descargar el layout.");
   const ExcelJS = await excelJs();
@@ -235,31 +250,44 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
   info.getRow(1).font = { bold: true, color: { argb: "FF183F69" } };
   for (let r = 1; r <= instructions.length; r++) info.getCell(r, 1).font = { bold: true };
   const cats = categories.filter((c)=>c.active && c.kind===kind).sort((a,b)=>a.name.localeCompare(b.name));
+  const activeAccounts=accounts.filter(a=>a.active&&a.companyId===company.id);
+  const activeMethods=methods.filter(m=>m.active);
+  const activeTypes=types.filter(t=>t.active&&t.kind===kind);
   const clients = kind === "income" ? customers.filter((c)=>c.active && c.companyId===company.id).sort((a,b)=>a.name.localeCompare(b.name)) : [];
   const catalog = wb.addWorksheet("Catalogos");
-  catalog.columns = [{header:"Conceptos",width:56},{header:"Clientes de esta empresa",width:80}];
-  for(let i=0;i<Math.max(cats.length,clients.length);i++) catalog.addRow([
+  catalog.columns = [{header:"Conceptos",width:56},{header:"Clientes de esta empresa",width:80},{header:"Cuentas",width:60},{header:"Formas de pago",width:52},{header:"Clasificaciones",width:54}];
+  for(let i=0;i<Math.max(cats.length,clients.length,activeAccounts.length,activeMethods.length,activeTypes.length);i++) catalog.addRow([
     cats[i] ? token(cats[i].id,cats[i].name):"",
     clients[i] ? customerToken(clients[i],entities):"",
+    activeAccounts[i] ? token(activeAccounts[i].id,activeAccounts[i].name):"",
+    activeMethods[i] ? token(activeMethods[i].id,activeMethods[i].name):"",
+    activeTypes[i] ? token(activeTypes[i].id,activeTypes[i].name):"",
   ]);
   catalog.getRow(1).font = {bold:true,color:{argb:"FFFFFFFF"}};
   catalog.getRow(1).fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF244C7D"}};
-  const headers = scopedHeaders(kind, BULK_VERSION);
+  const headers = [...scopedHeaders(kind, BULK_VERSION), ...(kind==="income"?[]:[HST_HEADER]), ...PAYMENT_HEADERS];
   const ws = wb.addWorksheet("Movimientos", {views:[{state:"frozen",ySplit:1}]});
-  const widths = kind === "income" ? [22,54,24,28,80,50,65] : [22,54,24,28,50,65];
+  const widths = kind === "income" ? [22,54,24,28,80,50,65,50,50,45,54] : [22,54,24,28,50,65,24,50,50,45,54];
   ws.columns = headers.map((header,i)=>({header,width:widths[i]}));
   ws.getRow(1).height=32;
   ws.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};
   ws.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF1D365A"}};
   ws.autoFilter={from:"A1",to:`${String.fromCharCode(64+headers.length)}1`};
   if (cats.length) wb.definedNames.add(`Catalogos!$A$2:$A$${cats.length+1}`,"ListaConceptos");
-  if (clients.length) wb.definedNames.add(`Catalogos!$B$2:$B$${clients.length+1}`,"ListaClientes");
+  if (clients.length) wb.definedNames.add(`Catalogos!$B$2:$B${clients.length+1}`,"ListaClientes");
+  if(activeAccounts.length)wb.definedNames.add(`Catalogos!$C$2:$C${activeAccounts.length+1}`,"ListaCuentas");
+  if(activeMethods.length)wb.definedNames.add(`Catalogos!$D$2:$D${activeMethods.length+1}`,"ListaMetodos");
+  if(activeTypes.length)wb.definedNames.add(`Catalogos!$E$2:$E${activeTypes.length+1}`,"ListaTipos");
   for (let row=2;row<=501;row++) {
     ws.getCell(row,1).numFmt="yyyy-mm-dd";
     ws.getCell(row,3).numFmt="#,##0.00";
     ws.getCell(row,4).numFmt="#,##0.00";
     if (cats.length) ws.getCell(row,2).dataValidation={type:"list",allowBlank:true,formulae:["ListaConceptos"],showErrorMessage:true,errorTitle:"Concepto inválido",error:"Selecciona un concepto del catálogo"};
     if (kind === "income" && clients.length) ws.getCell(row,5).dataValidation={type:"list",allowBlank:true,formulae:["ListaClientes"],showErrorMessage:true,errorTitle:"Cliente inválido",error:"Selecciona un cliente de esta empresa"};
+    const first = kind==="income"?8:8;
+    if(activeAccounts.length)for(const col of [first,first+1])ws.getCell(row,col).dataValidation={type:"list",allowBlank:true,formulae:["ListaCuentas"]};
+    if(activeMethods.length)ws.getCell(row,first+2).dataValidation={type:"list",allowBlank:true,formulae:["ListaMetodos"]};
+    if(activeTypes.length)ws.getCell(row,first+3).dataValidation={type:"list",allowBlank:true,formulae:["ListaTipos"]};
   }
   const data = await wb.xlsx.writeBuffer();
   const safeName = company.name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").slice(0,35).replace(/^-|-$/g,"") || "empresa";
