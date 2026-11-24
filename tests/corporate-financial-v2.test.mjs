@@ -11,7 +11,7 @@ function compile(relative,aliases={}){
     module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX
   }}).outputText;
   const local={exports:{}};
-  new Function("module","exports","require",output)(local,local.exports,(name)=>aliases[name]??require(name));
+  new Function("module","exports","require",output)(local,local.exports,(name)=>name==="exceljs"?{default:ExcelJS}:aliases[name]??require(name));
   return local.exports;
 }
 const fin=compile("src/lib/finance.ts");
