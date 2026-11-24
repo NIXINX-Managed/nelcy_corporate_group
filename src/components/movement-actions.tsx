@@ -155,7 +155,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
           <div className="form-grid">
             <label>Fecha<input type="date" value={date} onChange={(e)=>setDate(e.target.value)} /></label>
             {!income && <label>Entidad origen<select value={fromId} onChange={(e)=>{setFromId(e.target.value);setFromAccountId("");if(kind==="account_transfer"){setToId(e.target.value);setToAccountId("");}}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
-            {!outgoing && <label>Entidad destino<select value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");setToAccountId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
+            {!outgoing && <label>Entidad destino<select disabled={kind==="account_transfer"} value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");setToAccountId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
             {ordinary && <label>Concepto<select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}>{categories.filter((c)=>c.kind===kind).map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
             {income && <label>Cliente<select value={customerId} onChange={(e)=>setCustomerId(e.target.value)}><option value="">Sin cliente del catálogo</option>{companyCustomers.map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
             {income && <label>Valor de venta antes de impuestos CAD
