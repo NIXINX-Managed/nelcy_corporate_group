@@ -239,8 +239,8 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
     ["ID empresa del layout", company.id], ["Empresa", company.name],
     ["Uso", "Esta plantilla registra movimientos únicamente en la empresa indicada. Para otra empresa descarga otra plantilla."],
     ["Fecha", "AAAA-MM-DD o fecha real de Excel."],
-    ["Importes", "Captura el valor antes de impuestos y el total cobrado/pagado. Impuestos = total - valor antes de impuestos."],
-    ["Operaciones sin impuestos", "Si no se aplicaron impuestos, escribe el mismo importe en ambas columnas."],
+    ["Importes", kind==="income"?"Ingresos: conserva valor de venta y total.":"Costos y gastos: captura TOTAL; si HST es desconocido, deja subtotal y HST vacíos. Si hay HST, escribe su importe en la nueva columna al final."],
+    ["Operaciones sin impuestos", "Si subtotal está vacío y hay total, se considera HST cero hasta que se capture un impuesto. Los layouts anteriores conservan su interpretación."],
     ["Cliente", "Solo en ingresos. Selecciona entre los clientes activos de esta compañía. Puede quedar vacío."],
     ["Identificador", "La aplicación asigna una referencia interna al importar; no necesitas folios manuales."],
     ["Duplicados", "Se detectan por contenido y ocurrencia. Dos filas iguales representan dos registros distintos dentro del mismo Excel."],
@@ -307,10 +307,13 @@ const signature = (m: ImportableMovement | Movement) => {
   // Mantener exactamente la firma anterior cuando no hay cliente para no duplicar
   // movimientos sin folio ya importados con layouts v2.
   if (m.customerId) fields.push(m.customerId);
+  if (m.fromAccountId || m.toAccountId || m.paymentMethodId || m.movementTypeId)
+    fields.push("pagos",m.fromAccountId??"",m.toAccountId??"",m.paymentMethodId??"",m.movementTypeId??"");
   return fields.join("\u001f");
 };
 
-export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], customers: Customer[], existing: Movement[], orgId: string) {
+export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], customers: Customer[], existing: Movement[], orgId: string,
+  accounts: PaymentAccount[] = [], methods: PaymentMethod[] = [], types: MovementType[] = []) {
   if (file.size > MAX_IMPORT_BYTES) throw new Error("El archivo supera los 5 MB. Divide la carga en varios Excel.");
   if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("Selecciona un archivo .xlsx generado con esta aplicación.");
   const ExcelJS = await excelJs();
@@ -332,6 +335,10 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   for (let i = 0; i < headers.length; i++) {
     if (trimValue(ws.getCell(1, i+1).value) !== headers[i]) throw new Error(`Encabezado incorrecto en columna ${i+1}. Usa un layout sin modificar.`);
   }
+  const hasHstColumn = scoped && kind!=="income" && trimValue(ws.getCell(1,headers.length+1).value)===HST_HEADER;
+  const extraStart = headers.length + (hasHstColumn?1:0) + 1;
+  const hasPayments = PAYMENT_HEADERS.every((h,i)=>trimValue(ws.getCell(1,extraStart+i).value)===h);
+  // Los layouts históricos v2-v5 no poseen estas columnas y siguen siendo válidos.
   if (ws.rowCount > MAX_IMPORT_ROWS + 1) throw new Error(`Máximo ${MAX_IMPORT_ROWS} filas por archivo. Divide la carga.`);
   const activeEntities = entities.filter((e)=>e.active);
   const categoriesOfKind = categories.filter((c)=>c.active && c.kind === kind);
@@ -374,9 +381,14 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     // En v5 se capturan subtotal/neto y total; las versiones anteriores
     // conservan el esquema de total e impuestos explícitos para no reinterpretar datos.
     const modernAmounts = layoutVersion === BULK_VERSION;
-    const netInputCents = modernAmounts ? moneyValue(values[5]) : NaN;
     const amountCents = modernAmounts ? moneyValue(values[6]) : moneyValue(values[5]);
+    const hstText = hasHstColumn ? trimValue(ws.getCell(row,headers.length+1).value) : "";
+    const hstExtraCents = hstText ? moneyValue(ws.getCell(row,headers.length+1).value) : 0;
+    const netWasBlank = modernAmounts && kind!=="income" && trimValue(values[5])==="";
+    const netInputCents = modernAmounts ? netWasBlank ? amountCents-hstExtraCents : moneyValue(values[5]) : NaN;
     const taxCents = modernAmounts ? amountCents - netInputCents : trimValue(values[6]) === "" ? 0 : moneyValue(values[6]);
+    if (hasHstColumn && hstText && Number.isSafeInteger(taxCents) && taxCents!==hstExtraCents)
+      errors.push("HST no coincide con el subtotal: deja subtotal vacío o ajusta los importes.");
     const oldLayout = layoutVersion === OLD_BULK_VERSION;
     const customerText = oldLayout ? "" : trimValue(values[7]);
     const inputCounterparty = trimValue(values[oldLayout ? 7 : 8]);
@@ -391,6 +403,17 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       errors.push("La contraparte no coincide con el cliente elegido. Déjala vacía o escribe el nombre del cliente.");
     }
     const loan = loanFromText(loanText, existing);
+    const paymentTexts = hasPayments ? PAYMENT_HEADERS.map((_,i)=>trimValue(ws.getCell(row,extraStart+i).value)) : ["","","",""];
+    const accountFrom = paymentTexts[0] ? pickByName(paymentTexts[0], accounts.filter(a=>a.companyId===from?.id)) : null;
+    const accountTo = paymentTexts[1] ? pickByName(paymentTexts[1], accounts.filter(a=>a.companyId===to?.id)) : null;
+    const method = paymentTexts[2] ? pickByName(paymentTexts[2], methods) : null;
+    const financialType = paymentTexts[3] ? pickByName(paymentTexts[3],types.filter(t=>t.kind===kind)) : null;
+    if (paymentTexts[0] && (!accountFrom || !accountFrom.active)) errors.push("Cuenta de origen desconocida, inactiva o de otra compañía.");
+    if (paymentTexts[1] && (!accountTo || !accountTo.active)) errors.push("Cuenta de destino desconocida, inactiva o de otra compañía.");
+    if (paymentTexts[2] && (!method || !method.active)) errors.push("Forma de pago desconocida o inactiva.");
+    if (paymentTexts[3] && (!financialType || !financialType.active)) errors.push("Clasificación desconocida, inactiva o incompatible.");
+    if (kind==="income" && paymentTexts[0]) errors.push("Un ingreso no utiliza cuenta de salida.");
+    if ((kind==="cost"||kind==="expense") && paymentTexts[1]) errors.push("Los gastos no utilizan cuenta de recepción.");
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000) errors.push("Total inválido: utiliza un número positivo con máximo dos decimales.");
     if (modernAmounts && (!Number.isSafeInteger(netInputCents) || netInputCents <= 0 || netInputCents > amountCents))
       errors.push("Valor antes de impuestos inválido: debe ser positivo y no superar el total.");
@@ -425,6 +448,10 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       loanId: kind === "loan_repayment" ? loan?.id ?? null : null,
       amountCents, taxCents, counterparty, description,
       ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
+      ...(accountFrom ? { fromAccountId: accountFrom.id } : {}),
+      ...(accountTo ? { toAccountId: accountTo.id } : {}),
+      ...(method ? { paymentMethodId: method.id } : {}),
+      ...(financialType ? { movementTypeId: financialType.id } : {}),
       ...(userFolio ? { userFolio } : {}),
     };
     const rowSignature = signature(movement);
