@@ -478,8 +478,18 @@ export default function Home() {
         {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} paymentAccounts={paymentAccounts} paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user.uid} selectedEntity={selectedEntity} />}
         {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Las modificaciones y anulaciones conservan una bitácora. Préstamos y abonos requieren conciliación especial.</span></div>
           <div className="form-grid">
-            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); setMovementTypeId(""); setFromAccountId(""); setToAccountId(""); if(e.target.value==="account_transfer")setToEntityId(fromEntityId); }}>
-              {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+            <label>Tipo de movimiento<select value={movementTypeId ? "type:"+movementTypeId : entryKind} onChange={(e) => {
+              const selected = e.target.value.startsWith("type:") ? movementTypes.find(t=>"type:"+t.id===e.target.value && t.active) : null;
+              const nextKind = selected ? selected.kind : e.target.value as MovementKind;
+              setEntryKind(nextKind); setCategoryId(""); setLoanId(""); setCustomerId("");
+              setMovementTypeId(selected?.id??""); setFromAccountId(""); setToAccountId("");
+              if(nextKind==="account_transfer")setToEntityId(fromEntityId);
+            }}>
+              <optgroup label="Naturalezas financieras">{Object.entries(movementLabels).map(([id,label])=><option key={id} value={id}>{label}</option>)}</optgroup>
+              {movementTypes.some(t=>t.active)&&<optgroup label="Tipos personalizados del catálogo">
+                {movementTypes.filter(t=>t.active).sort((a,b)=>a.name.localeCompare(b.name)).map(t=><option key={t.id} value={"type:"+t.id}>{t.name} ({movementLabels[t.kind]})</option>)}
+              </optgroup>}
+            </select></label>
             <label>Fecha<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label>
             {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => {setFromEntityId(e.target.value);setFromAccountId("");if(entryKind==="account_transfer"){setToEntityId(e.target.value);setToAccountId("");}}}><option value="">Seleccionar origen</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
