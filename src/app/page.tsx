@@ -232,7 +232,7 @@ export default function Home() {
   const incomeCustomers = customers.filter((c) => c.companyId === toEntityId && c.active).sort((a, b) => a.name.localeCompare(b.name));
   const isOrdinary = ["income", "cost", "expense"].includes(entryKind);
   const isIncoming = entryKind === "income";
-  const isOutgoing = entryKind === "cost" || entryKind === "expense";
+  const isOutgoing = entryKind === "cost" || entryKind === "expense" || entryKind === "liability_payment";
   const needsTo = !isOutgoing;
   const needsFrom = !isIncoming;
   const nameOf = (id: string | null) => entities.find((e) => e.id === id)?.name ?? "—";
@@ -272,10 +272,18 @@ export default function Home() {
     const actualTo = needsTo ? toEntityId : null;
     const selectedLoan = loanBalances.find((l) => l.id === loanId);
     if ((needsFrom && !actualFrom) || (needsTo && !actualTo) ||
-      (actualFrom && actualTo && actualFrom === actualTo) ||
+      (actualFrom && actualTo && actualFrom === actualTo && entryKind !== "account_transfer") ||
       (isOrdinary && !categoryId)) {
       setNotice("Selecciona todas las entidades y el concepto requeridos.");
       return;
+    }
+    if (entryKind === "account_transfer" &&
+      (actualFrom !== actualTo || !actualFrom || !fromAccountId || !toAccountId ||
+       fromAccountId === toAccountId || entities.find(e=>e.id===actualFrom)?.type!=="company")) {
+      setNotice("El retiro/traspaso requiere la misma empresa y dos cuentas distintas."); return;
+    }
+    if (entryKind === "liability_payment" && entities.find(e=>e.id===actualFrom)?.type!=="company") {
+      setNotice("Los pagos de obligaciones deben salir de una empresa."); return;
     }
     if (entryKind === "personal_draw" &&
       (entities.find((e) => e.id === actualFrom)?.type !== "company" ||
@@ -476,12 +484,12 @@ export default function Home() {
         {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} paymentAccounts={paymentAccounts} paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user.uid} selectedEntity={selectedEntity} />}
         {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Las modificaciones y anulaciones conservan una bitácora. Préstamos y abonos requieren conciliación especial.</span></div>
           <div className="form-grid">
-            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); setMovementTypeId(""); setFromAccountId(""); setToAccountId(""); }}>
+            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); setMovementTypeId(""); setFromAccountId(""); setToAccountId(""); if(e.target.value==="account_transfer")setToEntityId(fromEntityId); }}>
               {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
             <label>Fecha<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label>
-            {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => {setFromEntityId(e.target.value);setFromAccountId("");}}><option value="">Seleccionar origen</option>
+            {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => {setFromEntityId(e.target.value);setFromAccountId("");if(entryKind==="account_transfer"){setToEntityId(e.target.value);setToAccountId("");}}}><option value="">Seleccionar origen</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
-            {needsTo && <label>Entidad de destino<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); setToAccountId(""); }}><option value="">Seleccionar destino</option>
+            {needsTo && <label>{entryKind==="account_transfer"?"Empresa (misma para origen y destino)":"Entidad de destino"}<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); setToAccountId(""); }}><option value="">Seleccionar destino</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
             {isOrdinary && <label>Concepto<select required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="">Seleccionar concepto</option>
               {availableCategories.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select></label>}
