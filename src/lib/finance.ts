@@ -1,7 +1,8 @@
 export type EntityType = "company" | "personal";
 export type MovementKind =
   | "income" | "cost" | "expense" | "transfer"
-  | "loan" | "loan_repayment" | "personal_draw";
+  | "loan" | "loan_repayment" | "personal_draw"
+  | "account_transfer" | "liability_payment";
 export type CategoryKind = "income" | "cost" | "expense";
 export type UserRole = "admin" | "editor" | "viewer";
 
@@ -81,6 +82,8 @@ export const movementLabels: Record<MovementKind, string> = {
   loan: "Préstamo entre entidades",
   loan_repayment: "Abono a préstamo",
   personal_draw: "Retiro para uso personal",
+  account_transfer: "Retiro / traspaso entre cuentas propias",
+  liability_payment: "Pago de obligación / pasivo",
 };
 export const categoriesLabels: Record<CategoryKind, string> = {
   income: "Ingresos", cost: "Costos", expense: "Gastos",
