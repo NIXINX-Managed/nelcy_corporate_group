@@ -11,8 +11,8 @@ import {
   type User,
 } from "firebase/auth";
 import {
-  type Category, type CategoryKind, type Customer, type Entity, type EntityType,
-  type Movement, type MovementKind, type UserRole,
+  type Category, type Customer, type Entity, type EntityType,
+  type Movement, type MovementKind, type UserRole, type PaymentAccount, type PaymentMethod, type MovementType,
   categoriesLabels, centsToMoney, dollarsToCents, movementLabels,
   profitability, selectedCashDelta,
 } from "@/lib/finance";
@@ -20,6 +20,7 @@ import { firebaseServices, isFirebaseConfigured, organizationId } from "@/lib/fi
 import { BulkImport } from "@/components/bulk-import";
 import { CatalogImport } from "@/components/catalog-import";
 import { CustomerCatalog } from "@/components/customer-catalog";
+import { FinancialCatalogs } from "@/components/financial-catalogs";
 import { CustomerImport } from "@/components/customer-import";
 import { WarehouseExport } from "@/components/warehouse-export";
 import { MovementActions } from "@/components/movement-actions";
@@ -56,6 +57,9 @@ export default function Home() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccount[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [movementTypes, setMovementTypes] = useState<MovementType[]>([]);
   const [tab, setTab] = useState<Tab>("dashboard");
   const [movementMode, setMovementMode] = useState<"single" | "bulk">("single");
   const [year, setYear] = useState("");
@@ -64,8 +68,6 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [entityName, setEntityName] = useState("");
   const [entityType, setEntityType] = useState<EntityType>("company");
-  const [categoryName, setCategoryName] = useState("");
-  const [categoryKind, setCategoryKind] = useState<CategoryKind>("income");
   const [entryKind, setEntryKind] = useState<MovementKind>("income");
   const [entryDate, setEntryDate] = useState("");
   const [fromEntityId, setFromEntityId] = useState("");
@@ -74,6 +76,11 @@ export default function Home() {
   const [loanId, setLoanId] = useState("");
   const [amount, setAmount] = useState("");
   const [netAmount, setNetAmount] = useState("");
+  const [taxAmount, setTaxAmount] = useState("0");
+  const [fromAccountId, setFromAccountId] = useState("");
+  const [toAccountId, setToAccountId] = useState("");
+  const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [movementTypeId, setMovementTypeId] = useState("");
   const [counterparty, setCounterparty] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [description, setDescription] = useState("");
@@ -150,6 +157,9 @@ export default function Home() {
         subscribe<Category>("categories", setCategories);
         subscribe<Customer>("customers", setCustomers);
         subscribe<Movement>("movements", setMovements);
+        subscribe<PaymentAccount>("paymentAccounts", setPaymentAccounts);
+        subscribe<PaymentMethod>("paymentMethods", setPaymentMethods);
+        subscribe<MovementType>("movementTypes", setMovementTypes);
         setStatus("ready");
       } catch (error) {
         if (active) { setStatus("unauthorized"); setNotice(messageFromError(error)); }
@@ -245,27 +255,17 @@ export default function Home() {
     } catch (error) { setNotice(messageFromError(error)); }
     finally { setBusy(false); }
   }
-  async function createCategory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user || !canWrite || !categoryName.trim()) return;
-    setBusy(true); setNotice("");
-    try {
-      await addDoc(collection(firebaseServices().db, "organizations", organizationId, "categories"), {
-        name: categoryName.trim(), kind: categoryKind, active: true, createdBy: user.uid, createdAt: serverTimestamp(),
-      });
-      setCategoryName(""); setNotice("Concepto registrado.");
-    } catch (error) { setNotice(messageFromError(error)); }
-    finally { setBusy(false); }
-  }
   async function createMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user || !canWrite) return;
     const amountCents = dollarsToCents(amount);
-    const netCents = isOrdinary ? dollarsToCents(netAmount) : amountCents;
+    const expenseTaxCents = isOutgoing ? dollarsToCents(taxAmount.trim() || "0") : 0;
+    const netCents = !isOrdinary ? amountCents : isIncoming ? dollarsToCents(netAmount) : amountCents - expenseTaxCents;
     const taxCents = isOrdinary ? amountCents - netCents : 0;
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 ||
-      !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents) {
-      setNotice("Revisa los importes: el valor antes de impuestos debe ser positivo y el total debe ser igual o mayor.");
+      !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents ||
+      (isOutgoing && (!Number.isSafeInteger(expenseTaxCents) || expenseTaxCents < 0))) {
+      setNotice("Revisa el total y el HST: el impuesto no puede superar el total pagado.");
       return;
     }
     const actualFrom = needsFrom ? fromEntityId : null;
@@ -294,6 +294,12 @@ export default function Home() {
       setNotice("Selecciona un cliente activo perteneciente a la compañía que recibe el ingreso.");
       return;
     }
+    if ((fromAccountId && !paymentAccounts.some(a=>a.id===fromAccountId && a.active && a.companyId===actualFrom)) ||
+      (toAccountId && !paymentAccounts.some(a=>a.id===toAccountId && a.active && a.companyId===actualTo)) ||
+      (paymentMethodId && !paymentMethods.some(m=>m.id===paymentMethodId && m.active)) ||
+      (movementTypeId && !movementTypes.some(t=>t.id===movementTypeId && t.active && t.kind===entryKind))) {
+      setNotice("Revisa la cuenta, el medio de pago o la clasificación seleccionada."); return;
+    }
     setBusy(true); setNotice("");
     try {
       await addDoc(collection(firebaseServices().db, "organizations", organizationId, "movements"), {
@@ -305,9 +311,14 @@ export default function Home() {
         ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
         description: description.trim(),
         ...(userFolio.trim() ? { userFolio: userFolio.trim() } : {}),
-        amountCents, taxCents, createdAt: serverTimestamp(), createdBy: user.uid,
+        amountCents, taxCents,
+        ...(fromAccountId ? { fromAccountId } : {}),
+        ...(toAccountId ? { toAccountId } : {}),
+        ...(paymentMethodId ? { paymentMethodId } : {}),
+        ...(movementTypeId ? { movementTypeId } : {}),
+        createdAt: serverTimestamp(), createdBy: user.uid,
       });
-      setAmount(""); setNetAmount(""); setCounterparty(""); setCustomerId(""); setDescription(""); setUserFolio(""); setLoanId("");
+      setAmount(""); setNetAmount(""); setTaxAmount("0"); setFromAccountId(""); setToAccountId(""); setPaymentMethodId(""); setMovementTypeId(""); setCounterparty(""); setCustomerId(""); setDescription(""); setUserFolio(""); setLoanId("");
       setNotice("Movimiento guardado en Firestore.");
     } catch (error) { setNotice(messageFromError(error)); }
     finally { setBusy(false); }
@@ -442,11 +453,9 @@ export default function Home() {
         {canWrite && user && <CustomerImport entities={entities} customers={customers} uid={user.uid} />}
       </>}
 
-      {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos reutilizables de ingresos, costos y gastos.</p></div></section>
-        {canWrite && <form className="form-panel" onSubmit={createCategory}><label>Concepto<input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} placeholder="Ej. Venta de servicios" maxLength={100} required /></label>
-          <label>Clasificación<select value={categoryKind} onChange={(e) => setCategoryKind(e.target.value as CategoryKind)}>
-            {Object.entries(categoriesLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-          <button className="button-primary" disabled={busy}>Crear concepto</button></form>}
+      {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos, fuentes bancarias, métodos de pago y clasificaciones.</p></div></section>
+        <FinancialCatalogs categories={categories} entities={entities} paymentAccounts={paymentAccounts}
+          paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user?.uid??""} canWrite={canWrite}/>
         {canWrite && user && <CatalogImport catalogType="categories" entities={entities} categories={categories} uid={user.uid} />}
         <section className="panel"><div className="panel-title"><h2>Conceptos configurados</h2><span>{categories.length} registrados</span></div>
           <div className="table-wrap"><table><thead><tr><th>Concepto</th><th>Clasificación</th><th>Estado</th></tr></thead><tbody>{categories.slice().sort((a,b) => a.name.localeCompare(b.name)).map((c) =>
@@ -467,12 +476,12 @@ export default function Home() {
         {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} uid={user.uid} selectedEntity={selectedEntity} />}
         {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Las modificaciones y anulaciones conservan una bitácora. Préstamos y abonos requieren conciliación especial.</span></div>
           <div className="form-grid">
-            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); }}>
+            <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); setMovementTypeId(""); setFromAccountId(""); setToAccountId(""); }}>
               {Object.entries(movementLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
             <label>Fecha<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label>
-            {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => setFromEntityId(e.target.value)}><option value="">Seleccionar origen</option>
+            {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => {setFromEntityId(e.target.value);setFromAccountId("");}}><option value="">Seleccionar origen</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
-            {needsTo && <label>Entidad de destino<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); }}><option value="">Seleccionar destino</option>
+            {needsTo && <label>Entidad de destino<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); setToAccountId(""); }}><option value="">Seleccionar destino</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
             {isOrdinary && <label>Concepto<select required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="">Seleccionar concepto</option>
               {availableCategories.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select></label>}
@@ -488,17 +497,39 @@ export default function Home() {
               </select>
               {incomeCompany && !incomeCustomers.length && <span className="field-hint">No hay clientes activos para esta empresa. Regístralos en Clientes.</span>}
             </label>}
-            {isOrdinary && <label>{entryKind === "income" ? "Valor de venta antes de impuestos (CAD)" : entryKind === "cost" ? "Costo antes de impuestos (CAD)" : "Gasto antes de impuestos (CAD)"}
+            {isIncoming && <label>Valor de venta antes de impuestos (CAD)
               <input required value={netAmount} onChange={(e) => setNetAmount(e.target.value)} placeholder="1000.00" inputMode="decimal" />
             </label>}
             <label>{entryKind === "income" ? "Total cobrado (CAD)" : entryKind === "cost" || entryKind === "expense" ? "Total pagado (CAD)" : "Importe total (CAD)"}
               <input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1130.00" inputMode="decimal" />
             </label>
+            {isOutgoing && <label>HST incluido en el total (CAD) — opcional
+              <input value={taxAmount} onChange={e=>setTaxAmount(e.target.value)} placeholder="0.00" inputMode="decimal"/>
+            </label>}
             {isOrdinary && <div className="calculated-tax" role="status">
-              <span>Impuestos calculados = total − valor antes de impuestos</span>
-              <strong>{Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(netAmount)) && dollarsToCents(amount) >= dollarsToCents(netAmount) && dollarsToCents(netAmount) > 0
-                ? centsToMoney(dollarsToCents(amount) - dollarsToCents(netAmount)) : "—"}</strong>
+              <span>{isIncoming ? "HST calculado: total − valor de venta" : "Subtotal calculado: total pagado − HST opcional"}</span>
+              <strong>{isIncoming
+                ? Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(netAmount)) && dollarsToCents(amount)>=dollarsToCents(netAmount) && dollarsToCents(netAmount)>0
+                  ? centsToMoney(dollarsToCents(amount)-dollarsToCents(netAmount)):"—"
+                : Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(taxAmount.trim()||"0")) && dollarsToCents(amount)>dollarsToCents(taxAmount.trim()||"0")
+                  ? centsToMoney(dollarsToCents(amount)-dollarsToCents(taxAmount.trim()||"0")):"—"}</strong>
             </div>}
+            {needsFrom && <label>Cuenta de salida (opcional)
+              <select value={fromAccountId} onChange={e=>setFromAccountId(e.target.value)}><option value="">No especificada</option>
+              {paymentAccounts.filter(a=>a.active && a.companyId===fromEntityId).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            </label>}
+            {needsTo && <label>Cuenta de recepción (opcional)
+              <select value={toAccountId} onChange={e=>setToAccountId(e.target.value)}><option value="">No especificada</option>
+              {paymentAccounts.filter(a=>a.active && a.companyId===toEntityId).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            </label>}
+            <label>Forma de pago (opcional)
+              <select value={paymentMethodId} onChange={e=>setPaymentMethodId(e.target.value)}><option value="">No especificada</option>
+              {paymentMethods.filter(m=>m.active).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>
+            </label>
+            <label>Clasificación adicional (opcional)
+              <select value={movementTypeId} onChange={e=>setMovementTypeId(e.target.value)}><option value="">Sin clasificación adicional</option>
+              {movementTypes.filter(t=>t.active && t.kind===entryKind).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+            </label>
             <label>Folio del usuario (opcional)<input value={userFolio} maxLength={100} onChange={(e) => setUserFolio(e.target.value)} placeholder="Factura, recibo o folio interno" /></label>
             <label>{entryKind === "income" ? "Contraparte libre (si no hay cliente vinculado)" : "Contraparte / proveedor"}
               <input value={customerId && entryKind === "income" ? customers.find((c) => c.id === customerId)?.name ?? "" : counterparty}
@@ -513,7 +544,7 @@ export default function Home() {
           <p className="small-note">Historial filtrado por: <strong>{perspectiveLabel}</strong> · {year}. Cambia la vista en la barra superior. Las transferencias se muestran desde ambas entidades, sin duplicarlas en el consolidado.</p>
           <div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Operación</th><th>Origen</th><th>Destino</th><th>Concepto</th><th>Folio / referencia</th><th>Cliente</th><th>Contraparte</th><th>Importe</th><th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>{filteredHistory.slice(0, 200).map((m) => <tr key={m.id}>
-              <td>{m.date}</td><td>{movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.customerId ? (m.counterparty || customers.find((c) => c.id === m.customerId)?.name || "—") : "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td><td>{m.voided ? "Anulado" : "Vigente"}</td><td><MovementActions movement={m} entities={entities} categories={categories} customers={customers} uid={user?.uid ?? ""} canWrite={canWrite} /></td></tr>)}</tbody></table></div>
+              <td>{m.date}</td><td>{movementTypes.find(t=>t.id===m.movementTypeId)?.name??movementLabels[m.kind]}</td><td>{nameOf(m.fromEntityId)}</td><td>{nameOf(m.toEntityId)}</td><td>{kindOf(m.categoryId)}</td><td>{m.userFolio || m.externalRef || "—"}</td><td>{m.customerId ? (m.counterparty || customers.find((c) => c.id === m.customerId)?.name || "—") : "—"}</td><td>{m.counterparty || m.description || "—"}</td><td>{centsToMoney(m.amountCents)}</td><td>{m.voided ? "Anulado" : "Vigente"}</td><td><MovementActions movement={m} entities={entities} categories={categories} customers={customers} paymentAccounts={paymentAccounts} paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user?.uid ?? ""} canWrite={canWrite} /></td></tr>)}</tbody></table></div>
           {!filteredHistory.length && <p className="empty">No hay movimientos en la perspectiva y ejercicio seleccionados.</p>}
           {filteredHistory.length > 200 && <p className="small-note">Vista preliminar: se muestran los 200 movimientos más recientes.</p>}
         </section>
