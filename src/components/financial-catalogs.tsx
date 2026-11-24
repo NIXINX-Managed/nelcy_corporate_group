@@ -41,8 +41,8 @@ export function FinancialCatalogs({categories,entities,paymentAccounts,paymentMe
       catalog === "paymentMethods" ? paymentMethods : movementTypes;
     return source.map(item=>({
       id:item.id,name:item.name,active:item.active,
-      kind:"kind" in item ? item.kind : undefined,
-      companyId:"companyId" in item ? item.companyId : undefined,
+      kind:"kind" in item ? (item.kind as string) : undefined,
+      companyId:"companyId" in item ? (item.companyId as string) : undefined,
     })).sort((a,b)=>a.name.localeCompare(b.name));
   },[catalog,categories,paymentAccounts,paymentMethods,movementTypes]);
 
