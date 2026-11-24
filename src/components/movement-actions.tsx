@@ -3,14 +3,14 @@
 import { useState } from "react";
 import { collection, doc, getDocs, runTransaction, serverTimestamp, type DocumentData } from "firebase/firestore";
 import { firebaseServices, organizationId } from "@/lib/firebase";
-import { centsToMoney, dollarsToCents, movementLabels, type Category, type Customer, type Entity, type Movement } from "@/lib/finance";
+import { centsToMoney, dollarsToCents, movementLabels, type Category, type Customer, type Entity, type Movement, type PaymentAccount, type PaymentMethod, type MovementType } from "@/lib/finance";
 
-type Props = { movement: Movement; entities: Entity[]; categories: Category[]; customers: Customer[]; uid: string; canWrite: boolean };
+type Props = { movement: Movement; entities: Entity[]; categories: Category[]; customers: Customer[]; paymentAccounts: PaymentAccount[]; paymentMethods: PaymentMethod[]; movementTypes: MovementType[]; uid: string; canWrite: boolean };
 type AuditRow = { action: string; reason: string; createdBy: string; revision: number; before?: DocumentData; after?: DocumentData };
-const editable = new Set(["income", "cost", "expense", "transfer", "personal_draw"]);
+const editable = new Set(["income", "cost", "expense", "transfer", "personal_draw", "account_transfer", "liability_payment"]);
 const textError = (e: unknown) => e instanceof Error ? e.message : "Error desconocido";
 
-export function MovementActions({ movement, entities, categories, customers, uid, canWrite }: Props) {
+export function MovementActions({ movement, entities, categories, customers, paymentAccounts, paymentMethods, movementTypes, uid, canWrite }: Props) {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -22,14 +22,19 @@ export function MovementActions({ movement, entities, categories, customers, uid
   const [customerId, setCustomerId] = useState(movement.customerId ?? "");
   const [amount, setAmount] = useState((movement.amountCents / 100).toFixed(2));
   const [net, setNet] = useState(((movement.amountCents - movement.taxCents) / 100).toFixed(2));
+  const [taxAmount, setTaxAmount] = useState((movement.taxCents/100).toFixed(2));
+  const [fromAccountId,setFromAccountId] = useState(movement.fromAccountId ?? "");
+  const [toAccountId,setToAccountId] = useState(movement.toAccountId ?? "");
+  const [paymentMethodId,setPaymentMethodId] = useState(movement.paymentMethodId ?? "");
+  const [movementTypeId,setMovementTypeId] = useState(movement.movementTypeId ?? "");
   const [counterparty, setCounterparty] = useState(movement.counterparty);
   const [description, setDescription] = useState(movement.description);
   const [reason, setReason] = useState("");
 
   const kind = movement.kind;
   const income = kind === "income";
-  const outgoing = kind === "expense" || kind === "cost";
-  const ordinary = income || outgoing;
+  const outgoing = kind === "expense" || kind === "cost" || kind === "liability_payment";
+  const ordinary = income || kind === "cost" || kind === "expense";
   const canEdit = canWrite && !movement.voided && editable.has(kind);
   const companyCustomers = customers.filter((c) => c.active && c.companyId === toId);
   const movementRef = doc(firebaseServices().db, "organizations", organizationId, "movements", movement.id);
@@ -43,6 +48,11 @@ export function MovementActions({ movement, entities, categories, customers, uid
     setCustomerId(movement.customerId ?? "");
     setAmount((movement.amountCents / 100).toFixed(2));
     setNet(((movement.amountCents - movement.taxCents) / 100).toFixed(2));
+    setTaxAmount((movement.taxCents / 100).toFixed(2));
+    setFromAccountId(movement.fromAccountId ?? "");
+    setToAccountId(movement.toAccountId ?? "");
+    setPaymentMethodId(movement.paymentMethodId ?? "");
+    setMovementTypeId(movement.movementTypeId ?? "");
     setCounterparty(movement.counterparty);
     setDescription(movement.description);
     setReason("");
@@ -58,17 +68,25 @@ export function MovementActions({ movement, entities, categories, customers, uid
     const cleanReason = reason.trim();
     if (cleanReason.length < 8 || cleanReason.length > 400) { setNotice("Indica un motivo de al menos 8 caracteres (máximo 400)."); return; }
     const amountCents = dollarsToCents(amount);
-    const netCents = ordinary ? dollarsToCents(net) : amountCents;
+    const expenseTaxCents = (kind === "cost" || kind === "expense") ? dollarsToCents(taxAmount.trim() || "0") : 0;
+    const netCents = !ordinary ? amountCents : income ? dollarsToCents(net) : amountCents - expenseTaxCents;
     const taxCents = ordinary ? amountCents - netCents : 0;
-    if (action === "edit" && (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 || !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents)) {
-      setNotice("Revisa los importes: el valor antes de impuestos debe ser positivo y el total igual o mayor."); return;
+    if (action === "edit" && (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 || !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents || (outgoing && (!Number.isSafeInteger(expenseTaxCents) || expenseTaxCents < 0)))) {
+      setNotice("Revisa los importes: el HST no puede exceder el total pagado."); return;
     }
     if (action === "edit") {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T12:00:00Z`))) { setNotice("Fecha inválida."); return; }
-      if ((income && !toId) || (outgoing && !fromId) || (!ordinary && (!fromId || !toId || fromId === toId))) { setNotice("Selecciona las entidades correctas."); return; }
+      if ((income && !toId) || (outgoing && !fromId) || (!ordinary && (!fromId || (!outgoing && !toId) || (fromId === toId && kind!=="account_transfer")) )) { setNotice("Selecciona las entidades correctas."); return; }
       if (ordinary && !categories.some((c) => c.id === categoryId && c.kind === kind && c.active)) { setNotice("Selecciona un concepto activo de la misma clasificación."); return; }
+      if(kind==="account_transfer" && (fromId!==toId || !fromAccountId || !toAccountId || fromAccountId===toAccountId)) {setNotice("Selecciona dos cuentas distintas dentro de la misma empresa.");return;}
       if (kind === "personal_draw" && !(entities.find((e)=>e.id === fromId && e.type === "company") && entities.find((e)=>e.id === toId && e.type === "personal"))) { setNotice("El retiro debe salir de una empresa hacia el ámbito personal."); return; }
       if (kind === "income" && customerId && !companyCustomers.some((c)=>c.id === customerId)) { setNotice("El cliente debe estar activo y pertenecer a la empresa destino."); return; }
+      if ((fromAccountId && !paymentAccounts.some(a=>a.id===fromAccountId && a.companyId===fromId)) ||
+        (toAccountId && !paymentAccounts.some(a=>a.id===toAccountId && a.companyId===toId)) ||
+        (paymentMethodId && !paymentMethods.some(m=>m.id===paymentMethodId)) ||
+        (movementTypeId && !movementTypes.some(t=>t.id===movementTypeId && t.kind===kind))) {
+        setNotice("Revisa la cuenta, el método o la clasificación de esta operación."); return;
+      }
       if (counterparty.trim().length > 160 || description.trim().length > 500) { setNotice("Contraparte u observaciones exceden su longitud máxima."); return; }
     }
     if (action === "void" && !window.confirm("¿Anular este movimiento? Se excluirá de los cálculos y quedará conservado para auditoría.")) return;
@@ -92,10 +110,20 @@ export function MovementActions({ movement, entities, categories, customers, uid
           counterparty: selectedCustomer ? selectedCustomer.name : counterparty.trim(),
           description: description.trim(),
           ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
+          ...(fromAccountId ? { fromAccountId } : {}),
+          ...(toAccountId ? { toAccountId } : {}),
+          ...(paymentMethodId ? { paymentMethodId } : {}),
+          ...(movementTypeId ? { movementTypeId } : {}),
         };
         const after = { ...before, ...patch, revision, updatedBy: uid, updatedAt: serverTimestamp() } as DocumentData;
         // Eliminar un cliente previamente vinculado, conservando el resto del historial.
-        if (action === "edit" && !selectedCustomer && before.customerId) delete after.customerId;
+        if (action === "edit") {
+          if (!selectedCustomer && before.customerId) delete after.customerId;
+          if (!fromAccountId) delete after.fromAccountId;
+          if (!toAccountId) delete after.toAccountId;
+          if (!paymentMethodId) delete after.paymentMethodId;
+          if (!movementTypeId) delete after.movementTypeId;
+        }
         transaction.set(auditRef, {
           action, reason: cleanReason, revision, createdBy: uid, createdAt: serverTimestamp(),
           before: snapshotFields(before), after: snapshotFields(after),
@@ -126,17 +154,39 @@ export function MovementActions({ movement, entities, categories, customers, uid
           <p className="small-note">Puedes corregir los movimientos ordinarios y las transferencias. Para préstamos y abonos se requiere conciliación vinculada.</p>
           <div className="form-grid">
             <label>Fecha<input type="date" value={date} onChange={(e)=>setDate(e.target.value)} /></label>
-            {!income && <label>Entidad origen<select value={fromId} onChange={(e)=>setFromId(e.target.value)}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
-            {!outgoing && <label>Entidad destino<select value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
+            {!income && <label>Entidad origen<select value={fromId} onChange={(e)=>{setFromId(e.target.value);setFromAccountId("");if(kind==="account_transfer"){setToId(e.target.value);setToAccountId("");}}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
+            {!outgoing && <label>Entidad destino<select disabled={kind==="account_transfer"} value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");setToAccountId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
             {ordinary && <label>Concepto<select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}>{categories.filter((c)=>c.kind===kind).map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
             {income && <label>Cliente<select value={customerId} onChange={(e)=>setCustomerId(e.target.value)}><option value="">Sin cliente del catálogo</option>{companyCustomers.map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
-            {ordinary && <label>{income ? "Valor de venta antes de impuestos CAD" : kind === "cost" ? "Costo antes de impuestos CAD" : "Gasto antes de impuestos CAD"}
+            {income && <label>Valor de venta antes de impuestos CAD
               <input inputMode="decimal" value={net} onChange={(e)=>setNet(e.target.value)} /></label>}
             <label>{income ? "Total cobrado CAD" : outgoing ? "Total pagado CAD" : "Importe total CAD"}
               <input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></label>
-            {ordinary && <div className="calculated-tax" role="status"><span>Impuestos calculados automáticamente</span>
-              <strong>{Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(net)) && dollarsToCents(amount) >= dollarsToCents(net) && dollarsToCents(net) > 0
-                ? centsToMoney(dollarsToCents(amount) - dollarsToCents(net)) : "—"}</strong></div>}
+            {(kind==="cost"||kind==="expense") && <label>HST incluido en el total CAD (opcional)
+              <input inputMode="decimal" value={taxAmount} onChange={e=>setTaxAmount(e.target.value)} placeholder="0.00"/></label>}
+            {ordinary && <div className="calculated-tax" role="status">
+              <span>{income ? "Impuestos calculados automáticamente" : "Subtotal = total − HST"}</span>
+              <strong>{income
+                ? Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(net)) && dollarsToCents(amount) >= dollarsToCents(net) && dollarsToCents(net) > 0
+                  ? centsToMoney(dollarsToCents(amount)-dollarsToCents(net)):"—"
+                : Number.isSafeInteger(dollarsToCents(amount)) && Number.isSafeInteger(dollarsToCents(taxAmount.trim()||"0")) && dollarsToCents(amount)>dollarsToCents(taxAmount.trim()||"0")
+                  ? centsToMoney(dollarsToCents(amount)-dollarsToCents(taxAmount.trim()||"0")):"—"}</strong></div>}
+            {!income && <label>Cuenta de salida
+              <select value={fromAccountId} onChange={e=>setFromAccountId(e.target.value)}><option value="">No especificada</option>
+              {paymentAccounts.filter(a=>a.companyId===fromId&&(a.active||a.id===fromAccountId)).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            </label>}
+            {!outgoing && <label>Cuenta de recepción
+              <select value={toAccountId} onChange={e=>setToAccountId(e.target.value)}><option value="">No especificada</option>
+              {paymentAccounts.filter(a=>a.companyId===toId&&(a.active||a.id===toAccountId)).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            </label>}
+            <label>Forma de pago
+              <select value={paymentMethodId} onChange={e=>setPaymentMethodId(e.target.value)}><option value="">No especificada</option>
+              {paymentMethods.filter(m=>m.active||m.id===paymentMethodId).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>
+            </label>
+            <label>Clasificación adicional
+              <select value={movementTypeId} onChange={e=>setMovementTypeId(e.target.value)}><option value="">Sin clasificación adicional</option>
+              {movementTypes.filter(t=>t.kind===kind&&(t.active||t.id===movementTypeId)).map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>
+            </label>
             <label>Contraparte<input maxLength={160} disabled={income && !!customerId} value={income && customerId ? companyCustomers.find((c)=>c.id===customerId)?.name ?? "" : counterparty} onChange={(e)=>setCounterparty(e.target.value)} /></label>
             <label className="wide">Observaciones<input maxLength={500} value={description} onChange={(e)=>setDescription(e.target.value)} /></label>
           </div>
@@ -153,7 +203,7 @@ export function MovementActions({ movement, entities, categories, customers, uid
   </>;
 }
 function incomingEntity(kind: Movement["kind"], value: string): string | null { return kind === "income" ? null : value; }
-function outgoingEntity(kind: Movement["kind"], value: string): string | null { return kind === "cost" || kind === "expense" ? null : value; }
+function outgoingEntity(kind: Movement["kind"], value: string): string | null { return kind === "cost" || kind === "expense" || kind === "liability_payment" ? null : value; }
 
 function snapshotFields(d: DocumentData) {
   return {
@@ -162,7 +212,10 @@ function snapshotFields(d: DocumentData) {
     categoryId: d.categoryId ?? null, loanId: d.loanId ?? null,
     counterparty: d.counterparty ?? "", description: d.description ?? "",
     amountCents: d.amountCents, taxCents: d.taxCents,
-    customerId: d.customerId ?? "", voided: d.voided ?? false,
+    customerId: d.customerId ?? "",
+    fromAccountId: d.fromAccountId ?? "", toAccountId: d.toAccountId ?? "",
+    paymentMethodId: d.paymentMethodId ?? "", movementTypeId: d.movementTypeId ?? "",
+    voided: d.voided ?? false,
     voidReason: d.voidReason ?? "", revision: d.revision ?? 0,
   };
 }

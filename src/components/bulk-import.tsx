@@ -3,15 +3,15 @@
 import { useMemo, useState } from "react";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { firebaseServices, organizationId } from "@/lib/firebase";
-import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
+import type { Category, Customer, Entity, Movement, MovementKind, PaymentAccount, PaymentMethod, MovementType } from "@/lib/finance";
 import { centsToMoney, movementLabels } from "@/lib/finance";
 import { ALL_KINDS, downloadLayout, MAX_IMPORT_ROWS, parseBulkFile, type PreviewLine } from "@/lib/bulk-excel";
 
-type Props = { entities: Entity[]; categories: Category[]; customers: Customer[]; movements: Movement[]; uid: string; selectedEntity: string };
+type Props = { entities: Entity[]; categories: Category[]; customers: Customer[]; movements: Movement[]; paymentAccounts: PaymentAccount[]; paymentMethods: PaymentMethod[]; movementTypes: MovementType[]; uid: string; selectedEntity: string };
 type ImportResult = { saved: number; skipped: number; failed: number };
 const errorLabel = (error: unknown) => error instanceof Error ? error.message : "Error desconocido";
 
-export function BulkImport({ entities, categories, customers, movements, uid, selectedEntity }: Props) {
+export function BulkImport({ entities, categories, customers, movements, paymentAccounts, paymentMethods, movementTypes, uid, selectedEntity }: Props) {
   const [kind, setKind] = useState<MovementKind>("income");
   const [layoutCompanyId, setLayoutCompanyId] = useState(entities.some((e)=>e.id === selectedEntity && e.type === "company") ? selectedEntity : "");
   const [file, setFile] = useState<File | null>(null);
@@ -40,7 +40,7 @@ export function BulkImport({ entities, categories, customers, movements, uid, se
   async function download() {
     setStatus("");
     setParsing(true);
-    try { await downloadLayout(kind, entities, categories, customers, movements, layoutCompanyId); }
+    try { await downloadLayout(kind, entities, categories, customers, movements, layoutCompanyId, paymentAccounts, paymentMethods, movementTypes); }
     catch (err) { setStatus(`No se pudo generar el layout: ${errorLabel(err)}`); }
     finally { setParsing(false); }
   }
@@ -48,7 +48,7 @@ export function BulkImport({ entities, categories, customers, movements, uid, se
     if (!file) return;
     setParsing(true); setResult(null); setIssues([]); setStatus(""); setPreview([]);
     try {
-      const parsed = await parseBulkFile(file, entities, categories, customers, movements, organizationId);
+      const parsed = await parseBulkFile(file, entities, categories, customers, movements, organizationId, paymentAccounts, paymentMethods, movementTypes);
       setPreview(parsed.rows); setPreviewKind(parsed.kind);
       setStatus(`Se revisaron ${parsed.rows.length} filas de ${movementLabels[parsed.kind]}. Comprueba el resultado antes de importar.`);
     } catch (err) { setStatus(`No se pudo validar: ${errorLabel(err)}`); }
@@ -98,7 +98,7 @@ export function BulkImport({ entities, categories, customers, movements, uid, se
 
   return <div className="bulk-stack">
     <section className="panel"><div className="panel-title"><h2>1. Descargar layout de Excel</h2><span>Compatible con Microsoft Excel (.xlsx)</span></div>
-      <p>Para ingresos, costos y gastos, selecciona una empresa: el Excel tendrá valor antes de impuestos y total. La aplicación calcula los impuestos automáticamente. En ingresos podrás elegir clientes de esa empresa. Descarga un layout nuevo v5.</p>
+      <p>Los layouts existentes siguen funcionando. Las nuevas plantillas agregan columnas opcionales al final para cuentas, medio de pago y clasificación. En costos y gastos el subtotal puede quedar vacío: captura el total y HST opcional (cero cuando se desconoce). En ingresos se conserva el valor antes de impuestos y total.</p>
       <div className="bulk-toolbar">
         <label className="bulk-label">Tipo de operación
           <select value={kind} disabled={parsing || uploading} onChange={(e)=>setKind(e.target.value as MovementKind)}>

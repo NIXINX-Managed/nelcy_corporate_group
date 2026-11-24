@@ -1,7 +1,8 @@
 export type EntityType = "company" | "personal";
 export type MovementKind =
   | "income" | "cost" | "expense" | "transfer"
-  | "loan" | "loan_repayment" | "personal_draw";
+  | "loan" | "loan_repayment" | "personal_draw"
+  | "account_transfer" | "liability_payment";
 export type CategoryKind = "income" | "cost" | "expense";
 export type UserRole = "admin" | "editor" | "viewer";
 
@@ -30,6 +31,23 @@ export interface Customer {
   taxId?: string;
   active: boolean;
 }
+export interface PaymentAccount {
+  id: string;
+  companyId: string;
+  name: string;
+  active: boolean;
+}
+export interface PaymentMethod {
+  id: string;
+  name: string;
+  active: boolean;
+}
+export interface MovementType {
+  id: string;
+  name: string;
+  kind: MovementKind;
+  active: boolean;
+}
 export interface Movement {
   id: string;
   date: string;
@@ -50,6 +68,10 @@ export interface Movement {
   externalRef?: string;
   userFolio?: string;
   customerId?: string;
+  fromAccountId?: string;
+  toAccountId?: string;
+  paymentMethodId?: string;
+  movementTypeId?: string;
 }
 
 export const movementLabels: Record<MovementKind, string> = {
@@ -60,6 +82,8 @@ export const movementLabels: Record<MovementKind, string> = {
   loan: "Préstamo entre entidades",
   loan_repayment: "Abono a préstamo",
   personal_draw: "Retiro para uso personal",
+  account_transfer: "Retiro / traspaso entre cuentas propias",
+  liability_payment: "Pago de obligación / pasivo",
 };
 export const categoriesLabels: Record<CategoryKind, string> = {
   income: "Ingresos", cost: "Costos", expense: "Gastos",

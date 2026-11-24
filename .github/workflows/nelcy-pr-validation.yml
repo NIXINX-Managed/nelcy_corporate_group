@@ -26,6 +26,10 @@ jobs:
         run: TZ=America/Toronto node tests/regression-check.cjs
       - name: NIXINX Control contract tests
         run: node --test tests/nixinx-control-gate.test.mjs tests/nixinx-preview-rules.test.mjs
+      - name: Finance and NIXINX Control contract tests
+        run: node --test tests/corporate-financial-v2.test.mjs tests/nixinx-control-gate.test.mjs tests/nixinx-preview-rules.test.mjs
+      - name: Compile production Firestore rules in emulator
+        run: npx --yes firebase-tools@14 emulators:exec --project demo-nelcy --config firebase.production.json --only firestore "echo Firestore-rules-compiled"
       - name: ESLint
         run: npm run lint
       - name: Next.js build

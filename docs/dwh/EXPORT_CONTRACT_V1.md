@@ -93,3 +93,82 @@ incremental de auditoría y cambios será una fase posterior.
 5. Verificar que el ID de un movimiento entre dos compañías aparece una sola vez,
    que `voided` y `revision` se mantienen y que la fecha no se desplaza.
 6. No fusionar a `main` ni publicar en Vercel hasta completar estos controles.
+
+
+---
+
+## Addendum v2 — Captura financiera y dimensiones de pagos (24 noviembre 2026)
+
+Los layouts ya entregados (`NELCY-LAYOUT-2`, `-3`, `-4`, `-5`) siguen siendo
+compatibles: se conservan los encabezados y la interpretación de importes.
+Las nuevas plantillas **agregan columnas opcionales al final**. El parser
+solo las procesa si sus encabezados coinciden exactamente.
+
+Para costos y gastos con layout v5, se puede dejar vacía la columna
+de subtotal y capturar exclusivamente **Total pagado**; el HST será
+cero. Si se conoce, se captura en la nueva columna opcional HST.
+Si se capturan subtotal e HST, sus importes deben coincidir.
+
+### Modelo operativo
+
+- `paymentAccounts`: cuentas/fuentes por `companyId`, CRUD con
+  desactivación sin borrado físico.
+- `paymentMethods`: catálogo del grupo de métodos (Cash, Cheque,
+  E-Transfer, etc.), CRUD con desactivación.
+- `movementTypes`: nombres de clasificaciones administrables con
+  `kind` financiero inmutable para preservar los cálculos.
+- `movements`: campos opcionales `fromAccountId`, `toAccountId`,
+  `paymentMethodId`, `movementTypeId`. Todos referencian
+  registros por ID; el cliente **no** determina la forma de pago.
+
+Nuevas naturalezas técnicas:
+- `account_transfer`: mismo `fromEntityId` y `toEntityId` de
+  empresa, dos cuentas diferentes y HST cero. No impacta el resultado
+  operativo ni crea una salida neta del grupo.
+- `liability_payment`: salida de empresa para pago de pasivo;
+  HST cero en la transferencia del pasivo, sin afectar por sí misma
+  el resultado operativo.
+
+El usuario puede instalar desde los catálogos las opciones solicitadas
+(Retiros, Government Liabilities, Cataleya Debt From Loans - Liabilities,
+Nelcy Personal Expenses y los rótulos Asset/Liabilities) con un botón
+explícito; no se generan datos transaccionales.
+
+### Tablas adicionales para BigQuery
+
+| Colección Firestore | Tabla NDJSON BigQuery | PK |
+| --- | --- | --- |
+| `paymentAccounts` | `dim_payment_account` | (`organization_id`, `account_id`) |
+| `paymentMethods` | `dim_payment_method` | (`organization_id`, `payment_method_id`) |
+| `movementTypes` | `dim_movement_type` | (`organization_id`, `movement_type_id`) |
+
+`fact_movement` agrega `from_account_id`, `to_account_id`,
+`payment_method_id` y `movement_type_id` (STRING/NULLABLE).
+Se preserva la fila única por movimiento y los montos en centavos.
+
+El formato exportado sigue siendo NDJSON (`NEWLINE_DELIMITED_JSON`),
+con un esquema JSON de BigQuery descargable por tabla.
+**No es un conector de sincronización automática**; para ingestión
+diaria en el DW segregado de Cataleya deberá implementarse un batch
+Firestore → BigQuery con servicio y permisos específicos del cliente.
+
+### Release protegido
+
+Se configuró `firebase.json` para usar por defecto
+`firestore.production.rules` (protegido por licencia de Control).
+Antes de publicar el frontend nuevo, realizar explícitamente:
+
+```powershell
+firebase deploy --project nelcy-corporate-group --config firebase.production.json --only firestore:rules
+```
+
+El archivo `firebase.production.json` apunta a
+`firestore.production.rules`, que **conserva**
+`hasActiveControlLease`. Verificar que las reglas quedaron publicadas
+y el acceso autorizado sigue funcionando antes de liberar el frontend
+de `main`. La vista de producción NIXINX es
+`https://nelcy.corporate.nixinx.app/`.
+
+No se modifican datos existentes por la publicación de reglas.
+Todas las pruebas de escritura Firestore con usuario autorizado
+deben confirmarse después del despliegue antes de declarar GO-LIVE.

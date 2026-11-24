@@ -1,4 +1,4 @@
-import type { Category, Customer, Entity, Movement, MovementKind } from "@/lib/finance";
+import type { Category, Customer, Entity, Movement, MovementKind, PaymentAccount, PaymentMethod, MovementType } from "@/lib/finance";
 import { dollarsToCents, movementLabels } from "@/lib/finance";
 
 export const BULK_VERSION = "NELCY-LAYOUT-5";
@@ -22,6 +22,8 @@ const OLD_BULK_HEADERS = [
   "Concepto", "Importe total (CAD)", "Impuestos incluidos (CAD)",
   "Contraparte / proveedor", "Observaciones", "ID préstamo original",
 ] as const;
+const PAYMENT_HEADERS = ["Cuenta origen (opcional)", "Cuenta destino (opcional)", "Forma de pago (opcional)", "Clasificación (opcional)"] as const;
+const HST_HEADER = "HST incluido (CAD) (opcional)";
 export const MAX_IMPORT_ROWS = 1000;
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const ordinaryKinds = ["income", "cost", "expense"];
@@ -40,6 +42,10 @@ export type ImportableMovement = {
   taxCents: number;
   userFolio?: string;
   customerId?: string;
+  fromAccountId?: string;
+  toAccountId?: string;
+  paymentMethodId?: string;
+  movementTypeId?: string;
 };
 export type PreviewLine = {
   row: number;
@@ -138,9 +144,10 @@ function filenameDownload(data: BlobPart, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], customers: Customer[], movements: Movement[], scopedEntityId = "") {
+export async function downloadLayout(kind: MovementKind, entities: Entity[], categories: Category[], customers: Customer[], movements: Movement[], scopedEntityId = "",
+  accounts: PaymentAccount[] = [], methods: PaymentMethod[] = [], types: MovementType[] = []) {
   if (ordinaryKinds.includes(kind)) {
-    return downloadScopedLayout(kind, scopedEntityId, entities, categories, customers);
+    return downloadScopedLayout(kind, scopedEntityId, entities, categories, customers, accounts, methods, types);
   }
   const ExcelJS = await excelJs();
   const wb = new ExcelJS.Workbook();
@@ -167,34 +174,48 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   const loans = movements.filter((m) => m.kind === "loan").sort((a,b)=> b.date.localeCompare(a.date));
   const activeCompanies = new Set(active.filter((e) => e.type === "company").map((e) => e.id));
   const activeCustomers = kind === "income" ? customers.filter((c) => c.active && activeCompanies.has(c.companyId)).sort((a,b) => a.companyId.localeCompare(b.companyId) || a.name.localeCompare(b.name)) : [];
+  const activeAccounts = accounts.filter(a=>a.active);
+  const activeMethods = methods.filter(m=>m.active);
+  const activeTypes = types.filter(t=>t.active&&t.kind===kind);
   catalog.columns = [
     { header: "Entidades", width: 54 }, { header: "Conceptos", width: 54 },
     { header: "Préstamos existentes", width: 74 }, { header: "Clientes activos (empresa indicada)", width: 92 },
+    {header:"Cuentas",width:58},{header:"Formas de pago",width:50},{header:"Clasificaciones",width:54},
   ];
-  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length, activeCustomers.length); i++) {
+  for (let i = 0; i < Math.max(active.length, relevant.length, loans.length, activeCustomers.length, activeAccounts.length, activeMethods.length, activeTypes.length); i++) {
     catalog.addRow([
       active[i] ? token(active[i].id, active[i].name) : "",
       relevant[i] ? token(relevant[i].id, relevant[i].name) : "",
       loans[i] ? loanToken(loans[i]) : "",
       activeCustomers[i] ? customerToken(activeCustomers[i], entities) : "",
+      activeAccounts[i] ? token(activeAccounts[i].id,activeAccounts[i].name) : "",
+      activeMethods[i] ? token(activeMethods[i].id,activeMethods[i].name) : "",
+      activeTypes[i] ? token(activeTypes[i].id,activeTypes[i].name) : "",
     ]);
   }
   catalog.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   catalog.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF244C7D" } };
   const ws = wb.addWorksheet("Movimientos", { views: [{ state: "frozen", ySplit: 1 }] });
-  ws.columns = BULK_HEADERS.map((header, i) => ({ header, width: [30, 22, 52, 52, 52, 23, 27, 80, 35, 55, 70][i] }));
+  ws.columns = [...BULK_HEADERS, ...PAYMENT_HEADERS].map((header, i) => ({ header, width: [30,22,52,52,52,23,27,80,35,55,70,55,55,45,55][i] }));
   ws.getRow(1).height = 33;
   ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   ws.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1D365A" } };
-  ws.autoFilter = { from: "A1", to: "K1" };
+  ws.autoFilter = { from: "A1", to: "O1" };
   if (active.length) wb.definedNames.add(`Catalogos!$A$2:$A$${active.length + 1}`, "ListaEntidades");
   if (relevant.length) wb.definedNames.add(`Catalogos!$B$2:$B$${relevant.length + 1}`, "ListaConceptos");
   if (loans.length) wb.definedNames.add(`Catalogos!$C$2:$C$${loans.length + 1}`, "ListaPrestamos");
   if (activeCustomers.length) wb.definedNames.add(`Catalogos!$D$2:$D$${activeCustomers.length + 1}`, "ListaClientes");
+  if(activeAccounts.length)wb.definedNames.add("Catalogos!$E$2:$E$"+(activeAccounts.length+1),"ListaCuentas");
+  if(activeMethods.length)wb.definedNames.add("Catalogos!$F$2:$F$"+(activeMethods.length+1),"ListaMetodos");
+  if(activeTypes.length)wb.definedNames.add("Catalogos!$G$2:$G$"+(activeTypes.length+1),"ListaTipos");
   for (let row = 2; row <= 501; row++) {
     ws.getCell(row, 2).numFmt = "yyyy-mm-dd";
     ws.getCell(row, 6).numFmt = "#,##0.00";
     ws.getCell(row, 7).numFmt = "#,##0.00";
+    if(activeAccounts.length)for(const col of [12,13])ws.getCell(row,col).dataValidation={type:"list",allowBlank:true,formulae:["ListaCuentas"]};
+    if(activeMethods.length)ws.getCell(row,14).dataValidation={type:"list",allowBlank:true,formulae:["ListaMetodos"]};
+    if(activeTypes.length)ws.getCell(row,15).dataValidation={type:"list",allowBlank:true,formulae:["ListaTipos"]};
+
     if (active.length) for (const col of [3,4]) ws.getCell(row,col).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaEntidades"], showErrorMessage: true, errorTitle: "Entidad inválida", error: "Selecciona una entidad de Catalogos" };
     if (relevant.length) ws.getCell(row,5).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaConceptos"], showErrorMessage: true, errorTitle: "Concepto inválido", error: "Selecciona un concepto de Catalogos" };
     if (loans.length && kind === "loan_repayment") ws.getCell(row,11).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaPrestamos"] };
@@ -211,7 +232,8 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
 
 
 // Layout por empresa para operaciones ordinarias: no muestra columnas de otras operaciones.
-async function downloadScopedLayout(kind: MovementKind, entityId: string, entities: Entity[], categories: Category[], customers: Customer[]) {
+async function downloadScopedLayout(kind: MovementKind, entityId: string, entities: Entity[], categories: Category[], customers: Customer[],
+  accounts: PaymentAccount[], methods: PaymentMethod[], types: MovementType[]) {
   const company = entities.find((e) => e.id === entityId && e.type === "company" && e.active);
   if (!company) throw new Error("Selecciona una compañía activa antes de descargar el layout.");
   const ExcelJS = await excelJs();
@@ -224,8 +246,8 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
     ["ID empresa del layout", company.id], ["Empresa", company.name],
     ["Uso", "Esta plantilla registra movimientos únicamente en la empresa indicada. Para otra empresa descarga otra plantilla."],
     ["Fecha", "AAAA-MM-DD o fecha real de Excel."],
-    ["Importes", "Captura el valor antes de impuestos y el total cobrado/pagado. Impuestos = total - valor antes de impuestos."],
-    ["Operaciones sin impuestos", "Si no se aplicaron impuestos, escribe el mismo importe en ambas columnas."],
+    ["Importes", kind==="income"?"Ingresos: conserva valor de venta y total.":"Costos y gastos: captura TOTAL; si HST es desconocido, deja subtotal y HST vacíos. Si hay HST, escribe su importe en la nueva columna al final."],
+    ["Operaciones sin impuestos", "Si subtotal está vacío y hay total, se considera HST cero hasta que se capture un impuesto. Los layouts anteriores conservan su interpretación."],
     ["Cliente", "Solo en ingresos. Selecciona entre los clientes activos de esta compañía. Puede quedar vacío."],
     ["Identificador", "La aplicación asigna una referencia interna al importar; no necesitas folios manuales."],
     ["Duplicados", "Se detectan por contenido y ocurrencia. Dos filas iguales representan dos registros distintos dentro del mismo Excel."],
@@ -235,31 +257,44 @@ async function downloadScopedLayout(kind: MovementKind, entityId: string, entiti
   info.getRow(1).font = { bold: true, color: { argb: "FF183F69" } };
   for (let r = 1; r <= instructions.length; r++) info.getCell(r, 1).font = { bold: true };
   const cats = categories.filter((c)=>c.active && c.kind===kind).sort((a,b)=>a.name.localeCompare(b.name));
+  const activeAccounts=accounts.filter(a=>a.active&&a.companyId===company.id);
+  const activeMethods=methods.filter(m=>m.active);
+  const activeTypes=types.filter(t=>t.active&&t.kind===kind);
   const clients = kind === "income" ? customers.filter((c)=>c.active && c.companyId===company.id).sort((a,b)=>a.name.localeCompare(b.name)) : [];
   const catalog = wb.addWorksheet("Catalogos");
-  catalog.columns = [{header:"Conceptos",width:56},{header:"Clientes de esta empresa",width:80}];
-  for(let i=0;i<Math.max(cats.length,clients.length);i++) catalog.addRow([
+  catalog.columns = [{header:"Conceptos",width:56},{header:"Clientes de esta empresa",width:80},{header:"Cuentas",width:60},{header:"Formas de pago",width:52},{header:"Clasificaciones",width:54}];
+  for(let i=0;i<Math.max(cats.length,clients.length,activeAccounts.length,activeMethods.length,activeTypes.length);i++) catalog.addRow([
     cats[i] ? token(cats[i].id,cats[i].name):"",
     clients[i] ? customerToken(clients[i],entities):"",
+    activeAccounts[i] ? token(activeAccounts[i].id,activeAccounts[i].name):"",
+    activeMethods[i] ? token(activeMethods[i].id,activeMethods[i].name):"",
+    activeTypes[i] ? token(activeTypes[i].id,activeTypes[i].name):"",
   ]);
   catalog.getRow(1).font = {bold:true,color:{argb:"FFFFFFFF"}};
   catalog.getRow(1).fill = {type:"pattern",pattern:"solid",fgColor:{argb:"FF244C7D"}};
-  const headers = scopedHeaders(kind, BULK_VERSION);
+  const headers = [...scopedHeaders(kind, BULK_VERSION), ...(kind==="income"?[]:[HST_HEADER]), ...PAYMENT_HEADERS];
   const ws = wb.addWorksheet("Movimientos", {views:[{state:"frozen",ySplit:1}]});
-  const widths = kind === "income" ? [22,54,24,28,80,50,65] : [22,54,24,28,50,65];
+  const widths = kind === "income" ? [22,54,24,28,80,50,65,50,50,45,54] : [22,54,24,28,50,65,24,50,50,45,54];
   ws.columns = headers.map((header,i)=>({header,width:widths[i]}));
   ws.getRow(1).height=32;
   ws.getRow(1).font={bold:true,color:{argb:"FFFFFFFF"}};
   ws.getRow(1).fill={type:"pattern",pattern:"solid",fgColor:{argb:"FF1D365A"}};
   ws.autoFilter={from:"A1",to:`${String.fromCharCode(64+headers.length)}1`};
   if (cats.length) wb.definedNames.add(`Catalogos!$A$2:$A$${cats.length+1}`,"ListaConceptos");
-  if (clients.length) wb.definedNames.add(`Catalogos!$B$2:$B$${clients.length+1}`,"ListaClientes");
+  if (clients.length) wb.definedNames.add(`Catalogos!$B$2:$B${clients.length+1}`,"ListaClientes");
+  if(activeAccounts.length)wb.definedNames.add(`Catalogos!$C$2:$C${activeAccounts.length+1}`,"ListaCuentas");
+  if(activeMethods.length)wb.definedNames.add(`Catalogos!$D$2:$D${activeMethods.length+1}`,"ListaMetodos");
+  if(activeTypes.length)wb.definedNames.add(`Catalogos!$E$2:$E${activeTypes.length+1}`,"ListaTipos");
   for (let row=2;row<=501;row++) {
     ws.getCell(row,1).numFmt="yyyy-mm-dd";
     ws.getCell(row,3).numFmt="#,##0.00";
     ws.getCell(row,4).numFmt="#,##0.00";
     if (cats.length) ws.getCell(row,2).dataValidation={type:"list",allowBlank:true,formulae:["ListaConceptos"],showErrorMessage:true,errorTitle:"Concepto inválido",error:"Selecciona un concepto del catálogo"};
     if (kind === "income" && clients.length) ws.getCell(row,5).dataValidation={type:"list",allowBlank:true,formulae:["ListaClientes"],showErrorMessage:true,errorTitle:"Cliente inválido",error:"Selecciona un cliente de esta empresa"};
+    const first = kind==="income"?8:8;
+    if(activeAccounts.length)for(const col of [first,first+1])ws.getCell(row,col).dataValidation={type:"list",allowBlank:true,formulae:["ListaCuentas"]};
+    if(activeMethods.length)ws.getCell(row,first+2).dataValidation={type:"list",allowBlank:true,formulae:["ListaMetodos"]};
+    if(activeTypes.length)ws.getCell(row,first+3).dataValidation={type:"list",allowBlank:true,formulae:["ListaTipos"]};
   }
   const data = await wb.xlsx.writeBuffer();
   const safeName = company.name.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g,"-").slice(0,35).replace(/^-|-$/g,"") || "empresa";
@@ -279,10 +314,13 @@ const signature = (m: ImportableMovement | Movement) => {
   // Mantener exactamente la firma anterior cuando no hay cliente para no duplicar
   // movimientos sin folio ya importados con layouts v2.
   if (m.customerId) fields.push(m.customerId);
+  if (m.fromAccountId || m.toAccountId || m.paymentMethodId || m.movementTypeId)
+    fields.push("pagos",m.fromAccountId??"",m.toAccountId??"",m.paymentMethodId??"",m.movementTypeId??"");
   return fields.join("\u001f");
 };
 
-export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], customers: Customer[], existing: Movement[], orgId: string) {
+export async function parseBulkFile(file: File, entities: Entity[], categories: Category[], customers: Customer[], existing: Movement[], orgId: string,
+  accounts: PaymentAccount[] = [], methods: PaymentMethod[] = [], types: MovementType[] = []) {
   if (file.size > MAX_IMPORT_BYTES) throw new Error("El archivo supera los 5 MB. Divide la carga en varios Excel.");
   if (!file.name.toLowerCase().endsWith(".xlsx")) throw new Error("Selecciona un archivo .xlsx generado con esta aplicación.");
   const ExcelJS = await excelJs();
@@ -304,12 +342,18 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   for (let i = 0; i < headers.length; i++) {
     if (trimValue(ws.getCell(1, i+1).value) !== headers[i]) throw new Error(`Encabezado incorrecto en columna ${i+1}. Usa un layout sin modificar.`);
   }
+  const hasHstColumn = scoped && kind!=="income" && trimValue(ws.getCell(1,headers.length+1).value)===HST_HEADER;
+  const extraStart = headers.length + (hasHstColumn?1:0) + 1;
+  const hasPayments = PAYMENT_HEADERS.every((h,i)=>trimValue(ws.getCell(1,extraStart+i).value)===h);
+  // Los layouts históricos v2-v5 no poseen estas columnas y siguen siendo válidos.
   if (ws.rowCount > MAX_IMPORT_ROWS + 1) throw new Error(`Máximo ${MAX_IMPORT_ROWS} filas por archivo. Divide la carga.`);
   const activeEntities = entities.filter((e)=>e.active);
   const categoriesOfKind = categories.filter((c)=>c.active && c.kind === kind);
   const existingIds = new Set(existing.map((m)=>m.id));
   const existingById = new Map<string, Movement>(existing.map((m): [string, Movement] => [m.id, m]));
   const existingSignatures = new Set(existing.filter((m)=>!m.voided).map(signature));
+  const financialSignature=(m:ImportableMovement|Movement)=>signature(m).split("\u001fpagos\u001f")[0];
+  const existingFinancialSignatures=new Set(existing.filter(m=>!m.voided).map(financialSignature));
   const seenIds = new Set<string>();
   const seenSignatures = new Set<string>();
   const occurrenceCount = new Map<string, number>();
@@ -333,6 +377,8 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     const errors: string[] = [];
     const warnings: string[] = [];
     if (values.some(isFormula)) errors.push("No se admiten fórmulas en los campos de captura; pega valores.");
+    if (hasHstColumn && isFormula(ws.getCell(row,headers.length+1).value)) errors.push("HST no puede contener fórmulas.");
+    if (hasPayments && PAYMENT_HEADERS.some((_,i)=>isFormula(ws.getCell(row,extraStart+i).value))) errors.push("Cuentas, método y clasificación deben ser valores, no fórmulas.");
     const userFolio = trimValue(values[0]);
     if (userFolio.length > 100) errors.push("El folio del usuario supera 100 caracteres.");
     const date = dateValue(values[1]);
@@ -346,9 +392,14 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     // En v5 se capturan subtotal/neto y total; las versiones anteriores
     // conservan el esquema de total e impuestos explícitos para no reinterpretar datos.
     const modernAmounts = layoutVersion === BULK_VERSION;
-    const netInputCents = modernAmounts ? moneyValue(values[5]) : NaN;
     const amountCents = modernAmounts ? moneyValue(values[6]) : moneyValue(values[5]);
+    const hstText = hasHstColumn ? trimValue(ws.getCell(row,headers.length+1).value) : "";
+    const hstExtraCents = hstText ? moneyValue(ws.getCell(row,headers.length+1).value) : 0;
+    const netWasBlank = modernAmounts && kind!=="income" && trimValue(values[5])==="";
+    const netInputCents = modernAmounts ? netWasBlank ? amountCents-hstExtraCents : moneyValue(values[5]) : NaN;
     const taxCents = modernAmounts ? amountCents - netInputCents : trimValue(values[6]) === "" ? 0 : moneyValue(values[6]);
+    if (hasHstColumn && hstText && Number.isSafeInteger(taxCents) && taxCents!==hstExtraCents)
+      errors.push("HST no coincide con el subtotal: deja subtotal vacío o ajusta los importes.");
     const oldLayout = layoutVersion === OLD_BULK_VERSION;
     const customerText = oldLayout ? "" : trimValue(values[7]);
     const inputCounterparty = trimValue(values[oldLayout ? 7 : 8]);
@@ -363,6 +414,17 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       errors.push("La contraparte no coincide con el cliente elegido. Déjala vacía o escribe el nombre del cliente.");
     }
     const loan = loanFromText(loanText, existing);
+    const paymentTexts = hasPayments ? PAYMENT_HEADERS.map((_,i)=>trimValue(ws.getCell(row,extraStart+i).value)) : ["","","",""];
+    const accountFrom = paymentTexts[0] ? pickByName(paymentTexts[0], accounts.filter(a=>a.companyId===from?.id)) : null;
+    const accountTo = paymentTexts[1] ? pickByName(paymentTexts[1], accounts.filter(a=>a.companyId===to?.id)) : null;
+    const method = paymentTexts[2] ? pickByName(paymentTexts[2], methods) : null;
+    const financialType = paymentTexts[3] ? pickByName(paymentTexts[3],types.filter(t=>t.kind===kind)) : null;
+    if (paymentTexts[0] && (!accountFrom || !accountFrom.active)) errors.push("Cuenta de origen desconocida, inactiva o de otra compañía.");
+    if (paymentTexts[1] && (!accountTo || !accountTo.active)) errors.push("Cuenta de destino desconocida, inactiva o de otra compañía.");
+    if (paymentTexts[2] && (!method || !method.active)) errors.push("Forma de pago desconocida o inactiva.");
+    if (paymentTexts[3] && (!financialType || !financialType.active)) errors.push("Clasificación desconocida, inactiva o incompatible.");
+    if (kind==="income" && paymentTexts[0]) errors.push("Un ingreso no utiliza cuenta de salida.");
+    if ((kind==="cost"||kind==="expense") && paymentTexts[1]) errors.push("Los gastos no utilizan cuenta de recepción.");
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000) errors.push("Total inválido: utiliza un número positivo con máximo dos decimales.");
     if (modernAmounts && (!Number.isSafeInteger(netInputCents) || netInputCents <= 0 || netInputCents > amountCents))
       errors.push("Valor antes de impuestos inválido: debe ser positivo y no superar el total.");
@@ -371,7 +433,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     if (counterparty.length > 160 || description.length > 500) errors.push("Contraparte u observaciones exceden el límite permitido.");
     const ordinary = ordinaryKinds.includes(kind);
     const requiresFrom = kind !== "income";
-    const requiresTo = kind !== "cost" && kind !== "expense";
+    const requiresTo = kind !== "cost" && kind !== "expense" && kind !== "liability_payment";
     if (requiresFrom && !from) errors.push("Origen no válido o ambiguo. Selecciona uno del catálogo.");
     if (requiresTo && !to) errors.push("Destino no válido o ambiguo. Selecciona uno del catálogo.");
     if (!requiresFrom && fromText) errors.push("Un ingreso no lleva entidad de origen.");
@@ -379,7 +441,9 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     if (ordinary && !category) errors.push("Concepto inexistente, inactivo o de otra clasificación.");
     if (!ordinary && categoryText) errors.push("Este tipo no debe llevar concepto de ingreso/costo/gasto.");
     if (!ordinary && taxCents !== 0) errors.push("Impuestos incluidos deben ser 0 para transferencias, préstamos y retiros.");
-    if (from && to && from.id === to.id) errors.push("Origen y destino deben ser distintos.");
+    if (from && to && from.id === to.id && kind!=="account_transfer") errors.push("Origen y destino deben ser distintos.");
+    if(kind==="account_transfer" && (from?.id!==to?.id || from?.type!=="company" || !accountFrom || !accountTo || accountFrom.id===accountTo.id)) errors.push("Retiro/traspaso: misma empresa y dos cuentas distintas.");
+    if(kind==="liability_payment" && from?.type!=="company") errors.push("Pago de pasivos: la entidad de origen debe ser una empresa.");
     if (kind === "personal_draw" && (from?.type !== "company" || to?.type !== "personal")) errors.push("Retiro personal: origen empresa y destino personal.");
     if (kind === "loan_repayment") {
       if (!loan) errors.push("Selecciona un préstamo original existente.");
@@ -397,6 +461,10 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
       loanId: kind === "loan_repayment" ? loan?.id ?? null : null,
       amountCents, taxCents, counterparty, description,
       ...(selectedCustomer ? { customerId: selectedCustomer.id } : {}),
+      ...(accountFrom ? { fromAccountId: accountFrom.id } : {}),
+      ...(accountTo ? { toAccountId: accountTo.id } : {}),
+      ...(method ? { paymentMethodId: method.id } : {}),
+      ...(financialType ? { movementTypeId: financialType.id } : {}),
       ...(userFolio ? { userFolio } : {}),
     };
     const rowSignature = signature(movement);
@@ -416,6 +484,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
         : "Movimiento ya importado; no se volverá a guardar.");
     }
     if (existingSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con un movimiento existente: posible duplicado.");
+    if (existingFinancialSignatures.has(financialSignature(movement)) && !existingSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con un movimiento existente en importes y fecha; solo difieren atributos de pago.");
     if (seenSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con otra fila del mismo Excel: revísala.");
     seenSignatures.add(rowSignature);
     if (errors.length === 0) {

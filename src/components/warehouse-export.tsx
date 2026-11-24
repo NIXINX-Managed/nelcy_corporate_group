@@ -9,10 +9,22 @@ import { firebaseServices, organizationId } from "@/lib/firebase";
 
 type FieldType = "STRING" | "DATE" | "TIMESTAMP" | "INTEGER" | "BOOLEAN";
 type Field = { name: string; type: FieldType; mode: "NULLABLE" };
-type Dataset = "entities" | "categories" | "customers" | "movements";
+type Dataset = "entities" | "categories" | "customers" | "movements" | "paymentAccounts" | "paymentMethods" | "movementTypes";
 type RowValue = string | number | boolean | null;
 type DataRow = Record<string, RowValue>;
 const FIELDS: Record<Dataset, [string, FieldType][]> = {
+  paymentAccounts: [
+    ["account_id","STRING"], ["company_id","STRING"], ["name","STRING"], ["active","BOOLEAN"],
+    ["created_at_utc","TIMESTAMP"], ["created_by","STRING"], ["updated_at_utc","TIMESTAMP"], ["updated_by","STRING"],
+  ],
+  paymentMethods: [
+    ["payment_method_id","STRING"], ["name","STRING"], ["active","BOOLEAN"],
+    ["created_at_utc","TIMESTAMP"], ["created_by","STRING"], ["updated_at_utc","TIMESTAMP"], ["updated_by","STRING"],
+  ],
+  movementTypes: [
+    ["movement_type_id","STRING"], ["name","STRING"], ["movement_kind","STRING"], ["active","BOOLEAN"],
+    ["created_at_utc","TIMESTAMP"], ["created_by","STRING"], ["updated_at_utc","TIMESTAMP"], ["updated_by","STRING"],
+  ],
   entities: [
     ["entity_id","STRING"], ["name","STRING"], ["entity_type","STRING"], ["active","BOOLEAN"],
     ["created_at_utc","TIMESTAMP"], ["created_by","STRING"],
@@ -31,6 +43,7 @@ const FIELDS: Record<Dataset, [string, FieldType][]> = {
     ["movement_id","STRING"], ["transaction_date","DATE"], ["movement_kind","STRING"],
     ["from_entity_id","STRING"], ["to_entity_id","STRING"], ["category_id","STRING"],
     ["loan_id","STRING"], ["customer_id","STRING"], ["counterparty","STRING"], ["description","STRING"],
+    ["from_account_id","STRING"], ["to_account_id","STRING"], ["payment_method_id","STRING"], ["movement_type_id","STRING"],
     ["amount_cents","INTEGER"], ["tax_cents","INTEGER"], ["net_amount_cents","INTEGER"],
     ["currency_code","STRING"], ["created_at_utc","TIMESTAMP"], ["created_by","STRING"],
     ["updated_at_utc","TIMESTAMP"], ["updated_by","STRING"], ["revision","INTEGER"],
@@ -42,6 +55,7 @@ const META_FIELDS: [string,FieldType][] = [
   ["schema_version","STRING"], ["organization_id","STRING"], ["extracted_at_utc","TIMESTAMP"],
 ];
 const TABLE: Record<Dataset,string> = {
+  paymentAccounts:"dim_payment_account", paymentMethods:"dim_payment_method", movementTypes:"dim_movement_type",
   entities:"dim_entity", categories:"dim_category", customers:"dim_customer", movements:"fact_movement",
 };
 function schema(dataset: Dataset): Field[] {
@@ -66,6 +80,15 @@ function makeRow(dataset: Dataset, snap: QueryDocumentSnapshot<DocumentData>, no
   const d = snap.data();
   const base: DataRow = { schema_version:"1", organization_id:organizationId, extracted_at_utc:now };
   switch (dataset) {
+    case "paymentAccounts": return {...base,account_id:snap.id,company_id:str(d.companyId),name:str(d.name),
+      active:bool(d.active),created_at_utc:utc(d.createdAt),created_by:str(d.createdBy),
+      updated_at_utc:utc(d.updatedAt),updated_by:str(d.updatedBy)};
+    case "paymentMethods": return {...base,payment_method_id:snap.id,name:str(d.name),active:bool(d.active),
+      created_at_utc:utc(d.createdAt),created_by:str(d.createdBy),
+      updated_at_utc:utc(d.updatedAt),updated_by:str(d.updatedBy)};
+    case "movementTypes": return {...base,movement_type_id:snap.id,name:str(d.name),movement_kind:str(d.kind),
+      active:bool(d.active),created_at_utc:utc(d.createdAt),created_by:str(d.createdBy),
+      updated_at_utc:utc(d.updatedAt),updated_by:str(d.updatedBy)};
     case "entities": return { ...base, entity_id:snap.id, name:str(d.name),
       entity_type:str(d.type), active:bool(d.active), created_at_utc:utc(d.createdAt), created_by:str(d.createdBy) };
     case "categories": return { ...base, category_id:snap.id, name:str(d.name),
@@ -80,6 +103,8 @@ function makeRow(dataset: Dataset, snap: QueryDocumentSnapshot<DocumentData>, no
       return { ...base, movement_id:snap.id, transaction_date:date(d.date),
         movement_kind:str(d.kind), from_entity_id:str(d.fromEntityId), to_entity_id:str(d.toEntityId),
         category_id:str(d.categoryId), loan_id:str(d.loanId), customer_id:str(d.customerId),
+        from_account_id:str(d.fromAccountId),to_account_id:str(d.toAccountId),
+        payment_method_id:str(d.paymentMethodId),movement_type_id:str(d.movementTypeId),
         counterparty:str(d.counterparty), description:str(d.description),
         amount_cents:gross, tax_cents:tax, net_amount_cents:gross !== null && tax !== null ? gross - tax : null,
         currency_code:"CAD", created_at_utc:utc(d.createdAt), created_by:str(d.createdBy),
@@ -154,6 +179,9 @@ export function WarehouseExport() {
           <option value="entities">Empresas y personal (dim_entity)</option>
           <option value="categories">Conceptos (dim_category)</option>
           <option value="customers">Clientes (dim_customer)</option>
+          <option value="paymentAccounts">Cuentas / fuentes (dim_payment_account)</option>
+          <option value="paymentMethods">Métodos de pago (dim_payment_method)</option>
+          <option value="movementTypes">Clasificaciones (dim_movement_type)</option>
         </select>
       </label>
       <button type="button" className="button-primary" disabled={busy} onClick={run}>{busy ? `Leyendo ${progress} registros…` : "Exportar datos .ndjson"}</button>

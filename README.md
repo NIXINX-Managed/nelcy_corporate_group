@@ -29,7 +29,7 @@ una `private_key` en el navegador.
 2. Authentication > Sign-in method: habilitar **Google** y configurar el correo de soporte.
 3. Authentication > Settings > Authorized domains: incluir el dominio final de Vercel (y `localhost` para desarrollo si no está).
 4. Firestore Database > Create database: crear la base `(default)` en **Production mode** y elegir región de Canadá cuando esté disponible. No abrir las reglas globales.
-5. Firestore Database > Rules: reemplazar por **todo** el contenido de `firestore.rules`, después pulsar **Publish**.
+5. Firestore Database > Rules: usar exclusivamente **`firestore.production.rules`** para producción, pues incluye el lease de NIXINX Control. `firestore.rules` se conserva solo como referencia histórica, nunca se debe publicar en producción. El archivo `firebase.json` ya apunta a `firestore.production.rules` de manera segura.
 
 ### Alta inicial del administrador (manual, segura)
 
@@ -98,3 +98,4 @@ Vercel debe hacer build automáticamente a través de la integración ya estable
   función transaccional validada en servidor. **No** usar el MVP como libro contable definitivo.
 - No utilizar datos personales reales de nómina/bancos hasta validar el acceso y las reglas
   con pruebas de usuarios autorizados/no autorizados.
+\n\n## Actualización financiera noviembre 2026\n\nSe incorporaron catálogos CRUD de fuentes/cuentas por compañía, medios de pago y clasificaciones financieras; captura individual y Excel de pagos por transacción; costos/gastos con Total pagado y HST opcional; y exportaciones NDJSON para BigQuery. Consultar `docs/dwh/EXPORT_CONTRACT_V1.md`. **El despliegue requiere primero las reglas `firestore.production.rules`**, protegidas por NIXINX Control.\n
