@@ -205,10 +205,17 @@ export async function downloadLayout(kind: MovementKind, entities: Entity[], cat
   if (relevant.length) wb.definedNames.add(`Catalogos!$B$2:$B$${relevant.length + 1}`, "ListaConceptos");
   if (loans.length) wb.definedNames.add(`Catalogos!$C$2:$C$${loans.length + 1}`, "ListaPrestamos");
   if (activeCustomers.length) wb.definedNames.add(`Catalogos!$D$2:$D$${activeCustomers.length + 1}`, "ListaClientes");
+  if(activeAccounts.length)wb.definedNames.add("Catalogos!$E$2:$E$"+(activeAccounts.length+1),"ListaCuentas");
+  if(activeMethods.length)wb.definedNames.add("Catalogos!$F$2:$F$"+(activeMethods.length+1),"ListaMetodos");
+  if(activeTypes.length)wb.definedNames.add("Catalogos!$G$2:$G$"+(activeTypes.length+1),"ListaTipos");
   for (let row = 2; row <= 501; row++) {
     ws.getCell(row, 2).numFmt = "yyyy-mm-dd";
     ws.getCell(row, 6).numFmt = "#,##0.00";
     ws.getCell(row, 7).numFmt = "#,##0.00";
+    if(activeAccounts.length)for(const col of [12,13])ws.getCell(row,col).dataValidation={type:"list",allowBlank:true,formulae:["ListaCuentas"]};
+    if(activeMethods.length)ws.getCell(row,14).dataValidation={type:"list",allowBlank:true,formulae:["ListaMetodos"]};
+    if(activeTypes.length)ws.getCell(row,15).dataValidation={type:"list",allowBlank:true,formulae:["ListaTipos"]};
+
     if (active.length) for (const col of [3,4]) ws.getCell(row,col).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaEntidades"], showErrorMessage: true, errorTitle: "Entidad inválida", error: "Selecciona una entidad de Catalogos" };
     if (relevant.length) ws.getCell(row,5).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaConceptos"], showErrorMessage: true, errorTitle: "Concepto inválido", error: "Selecciona un concepto de Catalogos" };
     if (loans.length && kind === "loan_repayment") ws.getCell(row,11).dataValidation = { type: "list", allowBlank: true, formulae: ["ListaPrestamos"] };
