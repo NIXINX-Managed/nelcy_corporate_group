@@ -70,7 +70,7 @@ service cloud.firestore {
           (d.keys().hasAll(['companyId']) && !d.keys().hasAny(['kind']) && activeCompany(orgId,d.companyId)) :
         catalog == 'movementTypes' ?
           (d.keys().hasAll(['kind']) && !d.keys().hasAny(['companyId']) &&
-           d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw']) :
+           d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw','account_transfer','liability_payment']) :
           (!d.keys().hasAny(['kind','companyId'])));
     }
     function validNamedCatalogUpdate() {
@@ -155,7 +155,7 @@ service cloud.firestore {
           'counterparty','description','amountCents','taxCents','createdAt','createdBy'
         ]) &&
         d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
-        d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw'] &&
+        d.kind in ['income','cost','expense','transfer','loan','loan_repayment','personal_draw','account_transfer','liability_payment'] &&
         d.amountCents is int && d.amountCents > 0 && d.amountCents <= 100000000000 &&
         d.taxCents is int && d.taxCents >= 0 && d.taxCents <= d.amountCents &&
         (d.kind in ['income','cost','expense'] ? d.taxCents < d.amountCents : d.taxCents == 0) &&
@@ -195,6 +195,13 @@ service cloud.firestore {
           (d.kind == 'personal_draw' && activeCompany(orgId, d.fromEntityId) &&
             activePersonal(orgId, d.toEntityId) && d.categoryId == null &&
             d.loanId == null && d.taxCents == 0) ||
+          (d.kind == 'account_transfer' && activeCompany(orgId, d.fromEntityId) &&
+            d.toEntityId == d.fromEntityId && d.categoryId == null && d.loanId == null &&
+            d.taxCents == 0 && d.keys().hasAll(['fromAccountId','toAccountId']) &&
+            d.fromAccountId != d.toAccountId) ||
+          (d.kind == 'liability_payment' && activeCompany(orgId, d.fromEntityId) &&
+            d.toEntityId == null && d.categoryId == null && d.loanId == null &&
+            d.taxCents == 0) ||
           (d.kind == 'loan_repayment' && activeEntity(orgId, d.fromEntityId) &&
             activeEntity(orgId, d.toEntityId) && d.fromEntityId != d.toEntityId &&
             d.categoryId == null && d.taxCents == 0 &&
@@ -238,7 +245,7 @@ service cloud.firestore {
       let old = resource.data;
       let revision = old.get('revision', 0) + 1;
       let audit = getAfter(auditDoc(orgId, movementId, 'r' + string(revision))).data;
-      return old.kind in ['income','cost','expense','transfer','personal_draw'] &&
+      return old.kind in ['income','cost','expense','transfer','personal_draw','account_transfer','liability_payment'] &&
         old.get('voided', false) == false &&
         d.diff(old).affectedKeys().hasOnly([
           'date','fromEntityId','toEntityId','categoryId',
@@ -267,7 +274,7 @@ service cloud.firestore {
       let updated = getAfter(movementDoc(orgId, movementId)).data;
       return d.keys().hasOnly(['action','reason','revision','createdBy','createdAt','before','after']) &&
         d.keys().hasAll(['action','reason','revision','createdBy','createdAt','before','after']) &&
-        old.kind in ['income','cost','expense','transfer','personal_draw'] &&
+        old.kind in ['income','cost','expense','transfer','personal_draw','account_transfer','liability_payment'] &&
         revisionId == 'r' + string(old.get('revision', 0) + 1) &&
         updated.revision == old.get('revision', 0) + 1 &&
         updated.updatedAt == request.time && updated.updatedBy == request.auth.uid &&
