@@ -99,6 +99,8 @@ test("government liability payment changes cash but not operating profit",()=>{
   assert.equal(fin.selectedCashDelta(movement,new Set(["cat"])),-508536);
 });
 test("Control lease remains mandatory in production and preview security rules",()=>{
+  const config=JSON.parse(readFileSync(new URL("../firebase.json",import.meta.url),"utf8"));
+  assert.equal(config.firestore.rules,"firestore.production.rules","default deployment must remain license-gated");
   for(const filename of ["firestore.production.rules","firestore.preview.rules"]){
     const txt=readFileSync(new URL("../"+filename,import.meta.url),"utf8");
     assert.ok(txt.includes("hasActiveControlLease(orgId)"));
