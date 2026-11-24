@@ -473,7 +473,7 @@ export default function Home() {
           <button className={movementMode === "single" ? "active" : ""} type="button" onClick={() => setMovementMode("single")}>Captura individual</button>
           <button className={movementMode === "bulk" ? "active" : ""} type="button" onClick={() => setMovementMode("bulk")}>Importación masiva Excel</button>
         </div>}
-        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} uid={user.uid} selectedEntity={selectedEntity} />}
+        {canWrite && movementMode === "bulk" && user && <BulkImport entities={entities} categories={categories} customers={customers} movements={movements} paymentAccounts={paymentAccounts} paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user.uid} selectedEntity={selectedEntity} />}
         {canWrite && movementMode === "single" && <form className="movement-form panel" onSubmit={createMovement}><div className="panel-title"><h2>Nuevo movimiento</h2><span>Las modificaciones y anulaciones conservan una bitácora. Préstamos y abonos requieren conciliación especial.</span></div>
           <div className="form-grid">
             <label>Tipo de movimiento<select value={entryKind} onChange={(e) => { setEntryKind(e.target.value as MovementKind); setCategoryId(""); setLoanId(""); setCustomerId(""); setMovementTypeId(""); setFromAccountId(""); setToAccountId(""); }}>
