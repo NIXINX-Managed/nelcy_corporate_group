@@ -30,6 +30,23 @@ export interface Customer {
   taxId?: string;
   active: boolean;
 }
+export interface PaymentAccount {
+  id: string;
+  companyId: string;
+  name: string;
+  active: boolean;
+}
+export interface PaymentMethod {
+  id: string;
+  name: string;
+  active: boolean;
+}
+export interface MovementType {
+  id: string;
+  name: string;
+  kind: MovementKind;
+  active: boolean;
+}
 export interface Movement {
   id: string;
   date: string;
@@ -50,6 +67,10 @@ export interface Movement {
   externalRef?: string;
   userFolio?: string;
   customerId?: string;
+  fromAccountId?: string;
+  toAccountId?: string;
+  paymentMethodId?: string;
+  movementTypeId?: string;
 }
 
 export const movementLabels: Record<MovementKind, string> = {
