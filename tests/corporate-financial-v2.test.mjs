@@ -84,6 +84,20 @@ test("own-company withdrawal from RBC to petty cash is not an operating expense"
   assert.equal(result.rows[0].data.movementTypeId,"cash-transfer");
   assert.equal(fin.profitability([{...result.rows[0].data,id:"test",createdBy:"user"}],new Set(["cat"])).operating,0);
 });
+test("tax amount inconsistent with entered subtotal is rejected",async()=>{
+  const {wb,sheet}=workbook("NELCY-LAYOUT-5","cost",true);
+  sheet.addRow([...scopedCost,"HST incluido (CAD) (opcional)","Cuenta origen (opcional)","Cuenta destino (opcional)","Forma de pago (opcional)","Clasificación (opcional)"]);
+  sheet.addRow(["2026-07-12","Payroll",1305,1500,"Vendor","",100,"","","",""]);
+  const result=await parse(wb);
+  assert.ok(result.rows[0].errors.some(e=>e.includes("HST no coincide")));
+});
+test("government liability payment changes cash but not operating profit",()=>{
+  const movement={id:"passive",date:"2026-07-14",kind:"liability_payment",
+    fromEntityId:"cat",toEntityId:null,categoryId:null,loanId:null,
+    counterparty:"CRA",description:"HST payable",amountCents:508536,taxCents:0,createdBy:"test"};
+  assert.equal(fin.profitability([movement],new Set(["cat"])).operating,0);
+  assert.equal(fin.selectedCashDelta(movement,new Set(["cat"])),-508536);
+});
 test("Control lease remains mandatory in production and preview security rules",()=>{
   for(const filename of ["firestore.production.rules","firestore.preview.rules"]){
     const txt=readFileSync(new URL("../"+filename,import.meta.url),"utf8");
