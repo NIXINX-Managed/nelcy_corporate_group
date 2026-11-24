@@ -154,10 +154,9 @@ Firestore → BigQuery con servicio y permisos específicos del cliente.
 
 ### Release protegido
 
-**No usar** `firebase deploy --only firestore:rules` con el
-`firebase.json` estándar: ese archivo apunta a `firestore.rules`
-sin el guard de licencia de producción. Antes del frontend nuevo,
-desplegar únicamente el archivo específico:
+Se configuró `firebase.json` para usar por defecto
+`firestore.production.rules` (protegido por licencia de Control).
+Antes de publicar el frontend nuevo, realizar explícitamente:
 
 ```powershell
 firebase deploy --project nelcy-corporate-group --config firebase.production.json --only firestore:rules
