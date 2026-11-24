@@ -422,7 +422,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     if (counterparty.length > 160 || description.length > 500) errors.push("Contraparte u observaciones exceden el límite permitido.");
     const ordinary = ordinaryKinds.includes(kind);
     const requiresFrom = kind !== "income";
-    const requiresTo = kind !== "cost" && kind !== "expense";
+    const requiresTo = kind !== "cost" && kind !== "expense" && kind !== "liability_payment";
     if (requiresFrom && !from) errors.push("Origen no válido o ambiguo. Selecciona uno del catálogo.");
     if (requiresTo && !to) errors.push("Destino no válido o ambiguo. Selecciona uno del catálogo.");
     if (!requiresFrom && fromText) errors.push("Un ingreso no lleva entidad de origen.");
@@ -430,7 +430,9 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     if (ordinary && !category) errors.push("Concepto inexistente, inactivo o de otra clasificación.");
     if (!ordinary && categoryText) errors.push("Este tipo no debe llevar concepto de ingreso/costo/gasto.");
     if (!ordinary && taxCents !== 0) errors.push("Impuestos incluidos deben ser 0 para transferencias, préstamos y retiros.");
-    if (from && to && from.id === to.id) errors.push("Origen y destino deben ser distintos.");
+    if (from && to && from.id === to.id && kind!=="account_transfer") errors.push("Origen y destino deben ser distintos.");
+    if(kind==="account_transfer" && (from?.id!==to?.id || from?.type!=="company" || !accountFrom || !accountTo || accountFrom.id===accountTo.id)) errors.push("Retiro/traspaso: misma empresa y dos cuentas distintas.");
+    if(kind==="liability_payment" && from?.type!=="company") errors.push("Pago de pasivos: la entidad de origen debe ser una empresa.");
     if (kind === "personal_draw" && (from?.type !== "company" || to?.type !== "personal")) errors.push("Retiro personal: origen empresa y destino personal.");
     if (kind === "loan_repayment") {
       if (!loan) errors.push("Selecciona un préstamo original existente.");
