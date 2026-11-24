@@ -7,7 +7,7 @@ import { centsToMoney, dollarsToCents, movementLabels, type Category, type Custo
 
 type Props = { movement: Movement; entities: Entity[]; categories: Category[]; customers: Customer[]; paymentAccounts: PaymentAccount[]; paymentMethods: PaymentMethod[]; movementTypes: MovementType[]; uid: string; canWrite: boolean };
 type AuditRow = { action: string; reason: string; createdBy: string; revision: number; before?: DocumentData; after?: DocumentData };
-const editable = new Set(["income", "cost", "expense", "transfer", "personal_draw"]);
+const editable = new Set(["income", "cost", "expense", "transfer", "personal_draw", "account_transfer", "liability_payment"]);
 const textError = (e: unknown) => e instanceof Error ? e.message : "Error desconocido";
 
 export function MovementActions({ movement, entities, categories, customers, paymentAccounts, paymentMethods, movementTypes, uid, canWrite }: Props) {
@@ -33,7 +33,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
 
   const kind = movement.kind;
   const income = kind === "income";
-  const outgoing = kind === "expense" || kind === "cost";
+  const outgoing = kind === "expense" || kind === "cost" || kind === "liability_payment";
   const ordinary = income || outgoing;
   const canEdit = canWrite && !movement.voided && editable.has(kind);
   const companyCustomers = customers.filter((c) => c.active && c.companyId === toId);
@@ -76,8 +76,9 @@ export function MovementActions({ movement, entities, categories, customers, pay
     }
     if (action === "edit") {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T12:00:00Z`))) { setNotice("Fecha inválida."); return; }
-      if ((income && !toId) || (outgoing && !fromId) || (!ordinary && (!fromId || !toId || fromId === toId))) { setNotice("Selecciona las entidades correctas."); return; }
+      if ((income && !toId) || (outgoing && !fromId) || (!ordinary && (!fromId || (!outgoing && !toId) || (fromId === toId && kind!=="account_transfer")) )) { setNotice("Selecciona las entidades correctas."); return; }
       if (ordinary && !categories.some((c) => c.id === categoryId && c.kind === kind && c.active)) { setNotice("Selecciona un concepto activo de la misma clasificación."); return; }
+      if(kind==="account_transfer" && (fromId!==toId || !fromAccountId || !toAccountId || fromAccountId===toAccountId)) {setNotice("Selecciona dos cuentas distintas dentro de la misma empresa.");return;}
       if (kind === "personal_draw" && !(entities.find((e)=>e.id === fromId && e.type === "company") && entities.find((e)=>e.id === toId && e.type === "personal"))) { setNotice("El retiro debe salir de una empresa hacia el ámbito personal."); return; }
       if (kind === "income" && customerId && !companyCustomers.some((c)=>c.id === customerId)) { setNotice("El cliente debe estar activo y pertenecer a la empresa destino."); return; }
       if ((fromAccountId && !paymentAccounts.some(a=>a.id===fromAccountId && a.companyId===fromId)) ||
@@ -202,7 +203,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
   </>;
 }
 function incomingEntity(kind: Movement["kind"], value: string): string | null { return kind === "income" ? null : value; }
-function outgoingEntity(kind: Movement["kind"], value: string): string | null { return kind === "cost" || kind === "expense" ? null : value; }
+function outgoingEntity(kind: Movement["kind"], value: string): string | null { return kind === "cost" || kind === "expense" || kind === "liability_payment" ? null : value; }
 
 function snapshotFields(d: DocumentData) {
   return {
