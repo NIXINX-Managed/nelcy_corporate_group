@@ -32,7 +32,7 @@ test("Production license requests are scoped to the Nelcy host and Firebase",asy
   VERCEL_ENV:"production",
   NIXINX_CORPORATE_PRODUCTION_GATE:"enabled",
   NIXINX_CORPORATE_HOSTNAME:"nelcy.corporate.nixinx.app",
-  NIXINX_CONTROL_API_URL:"https://nixinx-control.nixinx.org",
+  NIXINX_CONTROL_API_URL:"https://controlde.nixinx.org",
   NIXINX_CONTROL_SERVICE_TOKEN:"x".repeat(32),
   NIXINX_CONTROL_TENANT_ID:"nelcy",
   NEXT_PUBLIC_FIREBASE_PROJECT_ID:"nelcy-corporate-group"
@@ -52,6 +52,9 @@ test("Production license requests are scoped to the Nelcy host and Firebase",asy
  });
  assert.equal((await checkCorporateLicense("nelcy.corporate.nixinx.app")).allowed,true);
  assert.equal((await checkCorporateLicense("corporate.nixinx.app")).allowed,false);
+ process.env.NIXINX_CONTROL_API_URL="https://nixinx-control.nixinx.org";
+ assert.equal((await checkCorporateLicense("nelcy.corporate.nixinx.app")).allowed,false);
+ process.env.NIXINX_CONTROL_API_URL=config.NIXINX_CONTROL_API_URL;
  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID="nixinx-corporate-sbx-26";
  assert.equal((await checkCorporateLicense("nelcy.corporate.nixinx.app")).allowed,false);
  delete process.env.NIXINX_CORPORATE_PRODUCTION_GATE;
