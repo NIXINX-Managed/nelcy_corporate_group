@@ -34,7 +34,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
   const kind = movement.kind;
   const income = kind === "income";
   const outgoing = kind === "expense" || kind === "cost" || kind === "liability_payment";
-  const ordinary = income || outgoing;
+  const ordinary = income || kind === "cost" || kind === "expense";
   const canEdit = canWrite && !movement.voided && editable.has(kind);
   const companyCustomers = customers.filter((c) => c.active && c.companyId === toId);
   const movementRef = doc(firebaseServices().db, "organizations", organizationId, "movements", movement.id);
@@ -68,7 +68,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
     const cleanReason = reason.trim();
     if (cleanReason.length < 8 || cleanReason.length > 400) { setNotice("Indica un motivo de al menos 8 caracteres (máximo 400)."); return; }
     const amountCents = dollarsToCents(amount);
-    const expenseTaxCents = outgoing ? dollarsToCents(taxAmount.trim() || "0") : 0;
+    const expenseTaxCents = (kind === "cost" || kind === "expense") ? dollarsToCents(taxAmount.trim() || "0") : 0;
     const netCents = !ordinary ? amountCents : income ? dollarsToCents(net) : amountCents - expenseTaxCents;
     const taxCents = ordinary ? amountCents - netCents : 0;
     if (action === "edit" && (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 || !Number.isSafeInteger(netCents) || netCents <= 0 || netCents > amountCents || (outgoing && (!Number.isSafeInteger(expenseTaxCents) || expenseTaxCents < 0)))) {
@@ -154,7 +154,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
           <p className="small-note">Puedes corregir los movimientos ordinarios y las transferencias. Para préstamos y abonos se requiere conciliación vinculada.</p>
           <div className="form-grid">
             <label>Fecha<input type="date" value={date} onChange={(e)=>setDate(e.target.value)} /></label>
-            {!income && <label>Entidad origen<select value={fromId} onChange={(e)=>{setFromId(e.target.value);setFromAccountId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
+            {!income && <label>Entidad origen<select value={fromId} onChange={(e)=>{setFromId(e.target.value);setFromAccountId("");if(kind==="account_transfer"){setToId(e.target.value);setToAccountId("");}}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
             {!outgoing && <label>Entidad destino<select value={toId} onChange={(e)=>{setToId(e.target.value);setCustomerId("");setToAccountId("");}}>{entities.map((e)=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>}
             {ordinary && <label>Concepto<select value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}>{categories.filter((c)=>c.kind===kind).map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
             {income && <label>Cliente<select value={customerId} onChange={(e)=>setCustomerId(e.target.value)}><option value="">Sin cliente del catálogo</option>{companyCustomers.map((c)=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}
@@ -162,7 +162,7 @@ export function MovementActions({ movement, entities, categories, customers, pay
               <input inputMode="decimal" value={net} onChange={(e)=>setNet(e.target.value)} /></label>}
             <label>{income ? "Total cobrado CAD" : outgoing ? "Total pagado CAD" : "Importe total CAD"}
               <input inputMode="decimal" value={amount} onChange={(e)=>setAmount(e.target.value)} /></label>
-            {outgoing && <label>HST incluido en el total CAD (opcional)
+            {(kind==="cost"||kind==="expense") && <label>HST incluido en el total CAD (opcional)
               <input inputMode="decimal" value={taxAmount} onChange={e=>setTaxAmount(e.target.value)} placeholder="0.00"/></label>}
             {ordinary && <div className="calculated-tax" role="status">
               <span>{income ? "Impuestos calculados automáticamente" : "Subtotal = total − HST"}</span>
