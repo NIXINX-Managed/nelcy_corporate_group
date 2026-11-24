@@ -11,7 +11,7 @@ import {
   type User,
 } from "firebase/auth";
 import {
-  type Category, type Customer, type Entity, type EntityType,
+  type Category, type CategoryKind, type Customer, type Entity, type EntityType,
   type Movement, type MovementKind, type UserRole, type PaymentAccount, type PaymentMethod, type MovementType,
   categoriesLabels, centsToMoney, dollarsToCents, movementLabels,
   profitability, selectedCashDelta,
