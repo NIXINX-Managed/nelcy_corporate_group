@@ -17,7 +17,7 @@ export function previewDataIsolationVerified(options:{
  );
 }
 const productionHostname="nelcy.corporate.nixinx.app";
-const productionControlOrigin="https://nixinx-control.nixinx.org";
+const productionControlOrigin="https://controlde.nixinx.org";
 const pilotHostname="nelcy-preview.corporate.nixinx.app";
 const controlPreviewOrigin="https://nixinx-control-git-feat-control-corporat-ceb7ed-nixinx-projects.vercel.app";
 
