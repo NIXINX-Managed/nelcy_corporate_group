@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { addDoc, collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { firebaseServices, organizationId } from "@/lib/firebase";
 import {
   categoriesLabels, movementLabels,
@@ -86,6 +86,39 @@ export function FinancialCatalogs({categories,entities,paymentAccounts,paymentMe
     }catch(e){setNotice(e instanceof Error?e.message:"No fue posible guardar en Firestore.");}
     finally{setBusy(false);}
   }
+  async function addSuggested(){
+    if(!canWrite||busy||!uid)return;
+    const candidates = catalog==="paymentAccounts" ? ["RBC","TD","CASH","TD-CSH"].map(name=>({name,companyId})) :
+      catalog==="paymentMethods" ? ["Cash","Cheque","E-Transfer","Transferencia bancaria"].map(name=>({name})) :
+      [
+        {name:"Retiros",kind:"account_transfer"},
+        {name:"Government Liabilities",kind:"liability_payment"},
+        {name:"Cataleya Debt From Loans - Liabilities",kind:"loan"},
+        {name:"Nelcy Personal Expenses",kind:"personal_draw"},
+        {name:"Asset - Préstamo entre entidades",kind:"loan"},
+        {name:"Liabilities - Abono a préstamos",kind:"loan_repayment"},
+      ];
+    if(catalog==="paymentAccounts" && !companies.some(x=>x.id===companyId)){setNotice("Selecciona primero una empresa.");return;}
+    setBusy(true);setNotice("");
+    let created=0,skipped=0;
+    try{
+      const db=firebaseServices().db;
+      for(const candidate of candidates){
+        const c=candidate as {name:string;companyId?:string;kind?:string};
+        if(rows.some(x=>clean(x.name)===clean(c.name)&&(catalog!=="paymentAccounts"||x.companyId===companyId)&&(catalog!=="movementTypes"||x.kind===c.kind))){skipped++;continue;}
+        const key=new TextEncoder().encode([organizationId,catalog,c.companyId??"",c.kind??"",clean(c.name)].join("|"));
+        const digest=new Uint8Array(await crypto.subtle.digest("SHA-256",key));
+        const id="preset_"+Array.from(digest,v=>v.toString(16).padStart(2,"0")).join("").slice(0,34);
+        const reference=doc(db,"organizations",organizationId,catalog,id);
+        if((await getDoc(reference)).exists()){skipped++;continue;}
+        await setDoc(reference,{name:c.name,active:true,...(c.companyId?{companyId:c.companyId}:{}),
+          ...(c.kind?{kind:c.kind}:{}),createdBy:uid,createdAt:serverTimestamp()});
+        created++;
+      }
+      setNotice("Opciones creadas: "+created+"; ya existentes: "+skipped+".");
+    }catch(e){setNotice(e instanceof Error?e.message:"No se pudieron crear opciones.");}
+    finally{setBusy(false);}
+  }
   async function toggle(row:Entry){
     if(!canWrite||busy)return;
     setBusy(true);setNotice("");
@@ -123,6 +156,7 @@ export function FinancialCatalogs({categories,entities,paymentAccounts,paymentMe
       </label>}
     </div>
     {canWrite&&<div className="form-actions">
+      {catalog!=="categories"&&<button type="button" className="button-secondary" disabled={busy} onClick={addSuggested}>Agregar opciones solicitadas / frecuentes</button>}
       {editing&&<button type="button" className="button-secondary" onClick={reset}>Cancelar edición</button>}
       <button type="button" className="button-primary" disabled={busy||!name.trim()} onClick={save}>{editing?"Guardar nombre":"Crear registro"}</button>
     </div>}
