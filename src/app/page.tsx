@@ -467,14 +467,6 @@ export default function Home() {
           paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user?.uid??""} canWrite={canWrite}/>
         {canWrite && user && <FinancialCatalogImport entities={entities} accounts={paymentAccounts} methods={paymentMethods} types={movementTypes} uid={user.uid}/> }
         {canWrite && user && <CatalogImport catalogType="categories" entities={entities} categories={categories} uid={user.uid} />}
-        <section className="panel"><div className="panel-title"><h2>Conceptos configurados</h2><span>{categories.length} registrados</span></div>
-          <div className="table-wrap"><table><thead><tr><th>Concepto</th><th>Clasificación</th><th>Estado</th></tr></thead><tbody>{categories.slice().sort((a,b) => a.name.localeCompare(b.name)).map((c) =>
-            <tr key={c.id}><td>{c.name}</td><td>{categoriesLabels[c.kind]}</td><td>{c.active ? "Activo" : "Inactivo"}</td></tr>)}</tbody></table></div>
-          {!categories.length && <p className="empty">Crea al menos un concepto para poder registrar ingresos o gastos.</p>}</section></>}
-
-      {canWrite && tab === "warehouse" && <>
-        <section className="section-heading"><div><p className="eyebrow">EXTRACCIÓN DE DATOS</p><h1>Exportación para BigQuery</h1><p>Tablas normalizadas para el futuro Data Warehouse de Cataleya.</p></div></section>
-        <WarehouseExport />
       </>}
 
       {tab === "movements" && <><section className="section-heading"><div><p className="eyebrow">OPERACIÓN</p><h1>Registro de movimientos</h1>
@@ -491,7 +483,7 @@ export default function Home() {
             <label>Fecha<input type="date" required value={entryDate} onChange={(e) => setEntryDate(e.target.value)} /></label>
             {needsFrom && <label>Entidad de origen<select required value={fromEntityId} onChange={(e) => {setFromEntityId(e.target.value);setFromAccountId("");if(entryKind==="account_transfer"){setToEntityId(e.target.value);setToAccountId("");}}}><option value="">Seleccionar origen</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
-            {needsTo && <label>{entryKind==="account_transfer"?"Empresa (misma para origen y destino)":"Entidad de destino"}<select required value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); setToAccountId(""); }}><option value="">Seleccionar destino</option>
+            {needsTo && <label>{entryKind==="account_transfer"?"Empresa (misma para origen y destino)":"Entidad de destino"}<select required disabled={entryKind==="account_transfer"} value={toEntityId} onChange={(e) => { setToEntityId(e.target.value); setCustomerId(""); setToAccountId(""); }}><option value="">Seleccionar destino</option>
               {sortedEntities.filter((e) => e.active).map((e) => <option value={e.id} key={e.id}>{e.name}</option>)}</select></label>}
             {isOrdinary && <label>Concepto<select required value={categoryId} onChange={(e) => setCategoryId(e.target.value)}><option value="">Seleccionar concepto</option>
               {availableCategories.map((c) => <option value={c.id} key={c.id}>{c.name}</option>)}</select></label>}
