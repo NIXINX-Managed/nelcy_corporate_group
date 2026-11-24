@@ -7,7 +7,7 @@ import re
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-CONTROL = "https://nixinx-control.nixinx.org/api/internal/entitlement-decision"
+CONTROL = "https://controlde.nixinx.org/api/internal/entitlement-decision"
 METADATA = "http://metadata.google.internal/computeMetadata/v1"
 
 
