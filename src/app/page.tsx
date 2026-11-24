@@ -21,6 +21,7 @@ import { BulkImport } from "@/components/bulk-import";
 import { CatalogImport } from "@/components/catalog-import";
 import { CustomerCatalog } from "@/components/customer-catalog";
 import { FinancialCatalogs } from "@/components/financial-catalogs";
+import { FinancialCatalogImport } from "@/components/financial-catalog-import";
 import { CustomerImport } from "@/components/customer-import";
 import { WarehouseExport } from "@/components/warehouse-export";
 import { MovementActions } from "@/components/movement-actions";
@@ -464,6 +465,7 @@ export default function Home() {
       {tab === "categories" && <><section className="section-heading"><div><p className="eyebrow">CONFIGURACIÓN</p><h1>Catálogos financieros</h1><p>Conceptos, fuentes bancarias, métodos de pago y clasificaciones.</p></div></section>
         <FinancialCatalogs categories={categories} entities={entities} paymentAccounts={paymentAccounts}
           paymentMethods={paymentMethods} movementTypes={movementTypes} uid={user?.uid??""} canWrite={canWrite}/>
+        {canWrite && user && <FinancialCatalogImport entities={entities} accounts={paymentAccounts} methods={paymentMethods} types={movementTypes} uid={user.uid}/> }
         {canWrite && user && <CatalogImport catalogType="categories" entities={entities} categories={categories} uid={user.uid} />}
         <section className="panel"><div className="panel-title"><h2>Conceptos configurados</h2><span>{categories.length} registrados</span></div>
           <div className="table-wrap"><table><thead><tr><th>Concepto</th><th>Clasificación</th><th>Estado</th></tr></thead><tbody>{categories.slice().sort((a,b) => a.name.localeCompare(b.name)).map((c) =>
