@@ -259,7 +259,7 @@ export default function Home() {
     event.preventDefault();
     if (!user || !canWrite) return;
     const amountCents = dollarsToCents(amount);
-    const expenseTaxCents = isOutgoing ? dollarsToCents(taxAmount.trim() || "0") : 0;
+    const expenseTaxCents = (entryKind === "cost" || entryKind === "expense") ? dollarsToCents(taxAmount.trim() || "0") : 0;
     const netCents = !isOrdinary ? amountCents : isIncoming ? dollarsToCents(netAmount) : amountCents - expenseTaxCents;
     const taxCents = isOrdinary ? amountCents - netCents : 0;
     if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > 100000000000 ||
@@ -511,7 +511,7 @@ export default function Home() {
             <label>{entryKind === "income" ? "Total cobrado (CAD)" : entryKind === "cost" || entryKind === "expense" ? "Total pagado (CAD)" : "Importe total (CAD)"}
               <input required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1130.00" inputMode="decimal" />
             </label>
-            {isOutgoing && <label>HST incluido en el total (CAD) — opcional
+            {(entryKind==="cost"||entryKind==="expense") && <label>HST incluido en el total (CAD) — opcional
               <input value={taxAmount} onChange={e=>setTaxAmount(e.target.value)} placeholder="0.00" inputMode="decimal"/>
             </label>}
             {isOrdinary && <div className="calculated-tax" role="status">
