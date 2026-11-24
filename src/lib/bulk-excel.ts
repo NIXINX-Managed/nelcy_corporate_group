@@ -352,6 +352,8 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
   const existingIds = new Set(existing.map((m)=>m.id));
   const existingById = new Map<string, Movement>(existing.map((m): [string, Movement] => [m.id, m]));
   const existingSignatures = new Set(existing.filter((m)=>!m.voided).map(signature));
+  const financialSignature=(m:ImportableMovement|Movement)=>signature(m).split("\u001fpagos\u001f")[0];
+  const existingFinancialSignatures=new Set(existing.filter(m=>!m.voided).map(financialSignature));
   const seenIds = new Set<string>();
   const seenSignatures = new Set<string>();
   const occurrenceCount = new Map<string, number>();
@@ -375,6 +377,8 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
     const errors: string[] = [];
     const warnings: string[] = [];
     if (values.some(isFormula)) errors.push("No se admiten fórmulas en los campos de captura; pega valores.");
+    if (hasHstColumn && isFormula(ws.getCell(row,headers.length+1).value)) errors.push("HST no puede contener fórmulas.");
+    if (hasPayments && PAYMENT_HEADERS.some((_,i)=>isFormula(ws.getCell(row,extraStart+i).value))) errors.push("Cuentas, método y clasificación deben ser valores, no fórmulas.");
     const userFolio = trimValue(values[0]);
     if (userFolio.length > 100) errors.push("El folio del usuario supera 100 caracteres.");
     const date = dateValue(values[1]);
@@ -480,6 +484,7 @@ export async function parseBulkFile(file: File, entities: Entity[], categories: 
         : "Movimiento ya importado; no se volverá a guardar.");
     }
     if (existingSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con un movimiento existente: posible duplicado.");
+    if (existingFinancialSignatures.has(financialSignature(movement)) && !existingSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con un movimiento existente en importes y fecha; solo difieren atributos de pago.");
     if (seenSignatures.has(rowSignature) && !existingIds.has(docId)) warnings.push("Coincide con otra fila del mismo Excel: revísala.");
     seenSignatures.add(rowSignature);
     if (errors.length === 0) {
